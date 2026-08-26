@@ -14,7 +14,6 @@ st.set_page_config(
 # ==========================================
 # AUTENTICACIÓN / CONTRASEÑA DE ADMINISTRADOR
 # ==========================================
-# Contraseña de acceso único (puedes cambiarla aquí)
 ADMIN_PASSWORD = "admin123"
 
 if "authenticated" not in st.session_state:
@@ -53,7 +52,6 @@ def init_db():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Tabla de Socios
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS socios (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +62,6 @@ def init_db():
         )
     """)
 
-    # Tabla de Ahorros
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS ahorros (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,7 +73,6 @@ def init_db():
         )
     """)
 
-    # Tabla de Préstamos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS prestamos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,7 +88,6 @@ def init_db():
         )
     """)
 
-    # Tabla de Pagos de Préstamos
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS pagos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -116,8 +111,12 @@ init_db()
 # ==========================================
 def to_excel(df: pd.DataFrame) -> bytes:
     output = io.BytesIO()
-    with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Reporte")
+    try:
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, index=False, sheet_name="Reporte")
+    except ModuleNotFoundError:
+        st.error("Error: La librería 'openpyxl' no está instalada. Agrégala a tu archivo requirements.txt.")
+        return b""
     return output.getvalue()
 
 
@@ -134,6 +133,7 @@ opcion = st.sidebar.radio(
         "💵 Ahorros y Cuotas",
         "🤝 Préstamos",
         "📑 Pagos de Préstamos",
+        "📄 Estado de Cuenta",
         "🎉 Liquidación Anual",
     ],
 )
@@ -480,7 +480,75 @@ elif opcion == "📑 Pagos de Préstamos":
 
 
 # ==========================================
-# SECCIÓN 6: LIQUIDACIÓN ANUAL DE SOCIOS
+# SECCIÓN 6: IMPRIMIR ESTADO DE CUENTA
+# ==========================================
+elif opcion == "📄 Estado de Cuenta":
+    st.title("📄 Estado de Cuenta Individual")
+    st.caption("Consulta e imprime la ficha detallada de ahorro y préstamos por socio.")
+
+    conn = get_connection()
+    df_socios = pd.read_sql("SELECT id, nombre FROM socios", conn)
+
+    if df_socios.empty:
+        st.warning("No hay socios registrados.")
+    else:
+        dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
+        socio_sel = st.selectbox("Selecciona un Socio para generar Estado de Cuenta", list(dict_socios.keys()))
+        s_id = dict_socios[socio_sel]
+
+        # Resumen general del socio
+        df_ahorro_socio = pd.read_sql(f"SELECT SUM(monto) as total FROM ahorros WHERE socio_id = {s_id}", conn)
+        total_ahorrado_socio = df_ahorro_socio["total"].iloc[0] or 0.0
+
+        df_prestamo_socio = pd.read_sql(
+            f"SELECT SUM(monto_prestado) as total FROM prestamos WHERE socio_id = {s_id} AND estado = 'Activo'",
+            conn,
+        )
+        total_prestado_socio = df_prestamo_socio["total"].iloc[0] or 0.0
+
+        st.markdown("---")
+
+        # Plantilla imprimible en pantalla
+        st.markdown(f"## 🏦 Estado de Cuenta - **{socio_sel}**")
+        st.markdown(f"**Fecha de Emisión:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        c1, c2 = st.columns(2)
+        c1.metric("💰 Total Capital Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
+        c2.metric("📉 Préstamos Activos", f"C$ {total_prestado_socio:,.2f}")
+
+        st.markdown("### 📜 Detalle de Ahorros")
+        df_ahorros_det = pd.read_sql(
+            f"SELECT fecha as Fecha, monto as 'Monto (C$)', nota as Nota FROM ahorros WHERE socio_id = {s_id} ORDER BY fecha DESC",
+            conn,
+        )
+        st.dataframe(df_ahorros_det, use_container_width=True)
+
+        st.markdown("### 🤝 Detalle de Préstamos")
+        df_prestamos_det = pd.read_sql(
+            f"SELECT id as 'ID Préstamo', monto_prestado as 'Monto (C$)', interes_total as 'Interés Total (C$)', monto_total as 'Total a Pagar (C$)', estado as Estado, fecha_inicio as Fecha FROM prestamos WHERE socio_id = {s_id}",
+            conn,
+        )
+        st.dataframe(df_prestamos_det, use_container_width=True)
+
+        # Botón para descargar reporte de Estado de Cuenta en Excel
+        if not df_ahorros_det.empty or not df_prestamos_det.empty:
+            output_socio = io.BytesIO()
+            with pd.ExcelWriter(output_socio, engine="openpyxl") as writer:
+                df_ahorros_det.to_excel(writer, index=False, sheet_name="Ahorros")
+                df_prestamos_det.to_excel(writer, index=False, sheet_name="Prestamos")
+
+            st.download_button(
+                label=f"📥 Imprimir / Descargar Estado de Cuenta de {socio_sel} (Excel)",
+                data=output_socio.getvalue(),
+                file_name=f"estado_cuenta_{socio_sel.replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+    conn.close()
+
+
+# ==========================================
+# SECCIÓN 7: LIQUIDACIÓN ANUAL DE SOCIOS
 # ==========================================
 elif opcion == "🎉 Liquidación Anual":
     st.title("🎉 Cálculo de Liquidación Automática de Fin de Año")
@@ -488,11 +556,9 @@ elif opcion == "🎉 Liquidación Anual":
 
     conn = get_connection()
 
-    # Total Ahorrado por todos los socios
     df_tot_ahorro = pd.read_sql("SELECT SUM(monto) as total FROM ahorros", conn)
     gran_total_ahorrado = df_tot_ahorro["total"].iloc[0] or 0.0
 
-    # Total de Intereses Ganados (Recaudados de pagos tipo Interés o Completo)
     df_tot_intereses = pd.read_sql(
         "SELECT SUM(monto_pagado) as total FROM pagos WHERE tipo = 'Interés' OR tipo = 'Completo'",
         conn,
@@ -514,7 +580,6 @@ elif opcion == "🎉 Liquidación Anual":
     else:
         st.subheader("📋 Tabla Oficial de Reparto por Socio")
 
-        # Query para agrupar ahorro por socio
         query_liq = """
             SELECT s.id as ID, s.nombre as Socio, COALESCE(SUM(a.monto), 0) as Ahorro_Total
             FROM socios s
@@ -524,12 +589,10 @@ elif opcion == "🎉 Liquidación Anual":
         """
         df_liq = pd.read_sql(query_liq, conn)
 
-        # Cálculo automático de participaciones y ganancias
         df_liq["Participación (%)"] = (df_liq["Ahorro_Total"] / gran_total_ahorrado) * 100
         df_liq["Interés Ganado (C$)"] = (df_liq["Participación (%)"] / 100) * total_intereses_ganados
         df_liq["Total a Entregar (C$)"] = df_liq["Ahorro_Total"] + df_liq["Interés Ganado (C$)"]
 
-        # Formato para visualización en pantalla
         df_display = df_liq.copy()
         df_display["Ahorro_Total"] = df_display["Ahorro_Total"].map("C$ {:,.2f}".format)
         df_display["Participación (%)"] = df_display["Participación (%)"].map("{:,.2f}%".format)
