@@ -1,8 +1,11 @@
-import io
-import pandas as pd
-import streamlit as st
-from datetime import datetime
-from sqlalchemy import create_engine, text
+def get_engine():
+    db_url = st.secrets["postgres"]["url"]
+    return create_engine(
+        db_url,
+        pool_pre_ping=True,  # Reconecta si la conexión en el pool expiró
+        pool_recycle=300     # Renueva la conexión cada 5 minutos
+    )
+
 
 # ==========================================
 # CONFIGURACIÓN DE PÁGINA
