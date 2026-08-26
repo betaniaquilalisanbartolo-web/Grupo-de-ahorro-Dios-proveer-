@@ -1,14 +1,11 @@
-def get_engine():
-    db_url = st.secrets["postgres"]["url"]
-    return create_engine(
-        db_url,
-        pool_pre_ping=True,  # Reconecta si la conexión en el pool expiró
-        pool_recycle=300     # Renueva la conexión cada 5 minutos
-    )
-
+import io
+import pandas as pd
+import streamlit as st
+from datetime import datetime
+from sqlalchemy import create_engine, text
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA
+# 1. CONFIGURACIÓN DE PÁGINA (SIEMPRE PRIMERA LÍNEA)
 # ==========================================
 st.set_page_config(
     page_title="Caja de Ahorro Comunitario",
@@ -17,20 +14,20 @@ st.set_page_config(
 )
 
 # ==========================================
-# AUTENTICACIÓN / CONTRASEÑA DE ADMINISTRADOR
+# 2. AUTENTICACIÓN / CONTRASEÑA DE ADMINISTRADOR
 # ==========================================
 ADMIN_PASSWORD = "admin123"
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
+if "autenticado" not in st.session_state:
+    st.session_state.autenticado = False
 
 st.sidebar.title("🔒 Control de Acceso")
 
-if not st.session_state.authenticated:
+if not st.session_state.autenticado:
     password_input = st.sidebar.text_input("Contraseña de Administrador", type="password")
-    if st.sidebar.button("Iniciar Sesión"):
+    if st.sidebar.button("Iniciar sesión"):
         if password_input == ADMIN_PASSWORD:
-            st.session_state.authenticated = True
+            st.session_state.autenticado = True
             st.sidebar.success("¡Acceso concedido!")
             st.rerun()
         else:
@@ -39,89 +36,93 @@ if not st.session_state.authenticated:
     st.stop()
 else:
     st.sidebar.success("Sesión activa como Administrador")
-    if st.sidebar.button("Cerrar Sesión"):
-        st.session_state.authenticated = False
+    if st.sidebar.button("Cerrar sesión"):
+        st.session_state.autenticado = False
         st.rerun()
 
 # ==========================================
-# GESTIÓN DE BASE DE DATOS (Supabase / PostgreSQL)
+# 3. GESTIÓN DE BASE DE DATOS (Supabase / PostgreSQL)
 # ==========================================
-def get_engine():
+def obtener_motor():
     db_url = st.secrets["postgres"]["url"]
-    return create_engine(db_url)
+    return create_engine(
+        db_url,
+        pool_pre_ping=True,
+        pool_recycle=300
+    )
 
 def init_db():
-    engine = get_engine()
+    engine = obtener_motor()
     with engine.begin() as conn:
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS socios (
-                id SERIAL PRIMARY KEY,
-                nombre VARCHAR(255) NOT NULL,
-                telefono VARCHAR(50),
-                fecha_registro DATE NOT NULL,
-                estado VARCHAR(20) DEFAULT 'Activo'
-            );
+        CREATE TABLE IF NOT EXISTS socios (
+            id SERIAL PRIMARY KEY,
+            nombre VARCHAR(255) NOT NULL,
+            telefono VARCHAR(50),
+            fecha_registro DATE NOT NULL,
+            estado VARCHAR(20) DEFAULT 'Activo'
+        );
         """))
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS ahorros (
-                id SERIAL PRIMARY KEY,
-                socio_id INTEGER NOT NULL REFERENCES socios(id),
-                monto NUMERIC(12, 2) NOT NULL,
-                fecha DATE NOT NULL,
-                nota TEXT,
-                anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-            );
+        CREATE TABLE IF NOT EXISTS ahorros (
+            id SERIAL PRIMARY KEY,
+            socio_id INTEGER NOT NULL REFERENCES socios(id),
+            monto NUMERIC(12, 2) NOT NULL,
+            fecha DATE NOT NULL,
+            nota TEXT,
+            anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+        );
         """))
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS prestamos (
-                id SERIAL PRIMARY KEY,
-                socio_id INTEGER NOT NULL REFERENCES socios(id),
-                monto_prestado NUMERIC(12, 2) NOT NULL,
-                tasa_interes NUMERIC(5, 2) NOT NULL,
-                plazo_meses INTEGER NOT NULL,
-                interes_total NUMERIC(12, 2) NOT NULL,
-                monto_total NUMERIC(12, 2) NOT NULL,
-                fecha_inicio DATE NOT NULL,
-                estado VARCHAR(20) DEFAULT 'Activo',
-                anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-            );
+        CREATE TABLE IF NOT EXISTS prestamos (
+            id SERIAL PRIMARY KEY,
+            socio_id INTEGER NOT NULL REFERENCES socios(id),
+            monto_prestado NUMERIC(12, 2) NOT NULL,
+            tasa_interes NUMERIC(5, 2) NOT NULL,
+            plazo_meses INTEGER NOT NULL,
+            interes_total NUMERIC(12, 2) NOT NULL,
+            monto_total NUMERIC(12, 2) NOT NULL,
+            fecha_inicio DATE NOT NULL,
+            estado VARCHAR(20) DEFAULT 'Activo',
+            anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+        );
         """))
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS pagos (
-                id SERIAL PRIMARY KEY,
-                prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
-                monto_pagado NUMERIC(12, 2) NOT NULL,
-                fecha DATE NOT NULL,
-                tipo VARCHAR(20) CHECK(tipo IN ('Capital', 'Interés', 'Completo'))
-            );
+        CREATE TABLE IF NOT EXISTS pagos (
+            id SERIAL PRIMARY KEY,
+            prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
+            monto_pagado NUMERIC(12, 2) NOT NULL,
+            fecha DATE NOT NULL,
+            tipo VARCHAR(20) CHECK(tipo IN ('Capital', 'Interés', 'Completo'))
+        );
         """))
         conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS cierres_anuales (
-                id SERIAL PRIMARY KEY,
-                anio INTEGER NOT NULL,
-                total_ahorrado NUMERIC(12, 2) NOT NULL,
-                total_intereses NUMERIC(12, 2) NOT NULL,
-                fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
+        CREATE TABLE IF NOT EXISTS cierres_anuales (
+            id SERIAL PRIMARY KEY,
+            anio INTEGER NOT NULL,
+            total_ahorrado NUMERIC(12, 2) NOT NULL,
+            total_intereses NUMERIC(12, 2) NOT NULL,
+            fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
         """))
 
 init_db()
 
 # ==========================================
-# FUNCIÓN UTILITARIA PARA EXPORTAR A EXCEL
+# 4. FUNCIÓN UTILITARIA PARA EXPORTAR A EXCEL
 # ==========================================
 def to_excel(df: pd.DataFrame) -> bytes:
-    output = io.BytesIO()
+    salida = io.BytesIO()
     try:
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        with pd.ExcelWriter(salida, engine="openpyxl") as writer:
             df.to_excel(writer, index=False, sheet_name="Reporte")
     except ModuleNotFoundError:
         st.error("Error: La librería 'openpyxl' no está instalada. Agrégala a tu archivo requirements.txt.")
         return b""
-    return output.getvalue()
+    return salida.getvalue()
 
 # ==========================================
-# MENÚ NAVEGACIÓN LATERAL
+# 5. MENÚ NAVEGACIÓN LATERAL
 # ==========================================
 st.sidebar.markdown("---")
 st.sidebar.title("🏦 Menú Principal")
@@ -139,59 +140,60 @@ opcion = st.sidebar.radio(
     ],
 )
 
-engine = get_engine()
+engine = obtener_motor()
 
 # ==========================================
 # SECCIÓN 1: PANEL GENERAL (DASHBOARD)
 # ==========================================
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
-    st.caption("Resumen financiero en tiempo real expresado en Córdobas (C$).")
-
+    st.caption("Resumen financiero en tiempo real expresado en Córdoba (C$).")
+    
     with engine.connect() as conn:
         df_ahorros = pd.read_sql("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros", conn)
         total_ahorrado = float(df_ahorros["total"].iloc[0])
-
+        
         df_prestamos = pd.read_sql("SELECT COALESCE(SUM(monto_prestado), 0) as total FROM prestamos WHERE estado = 'Activo'", conn)
         total_prestado = float(df_prestamos["total"].iloc[0])
-
+        
         df_pagos = pd.read_sql("SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos", conn)
         total_recaudado = float(df_pagos["total"].iloc[0])
-
+        
         df_socios = pd.read_sql("SELECT COUNT(*) as total FROM socios WHERE estado = 'Activo'", conn)
         total_socios = int(df_socios["total"].iloc[0])
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("💰 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
+    col1.metric("💵 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
     col2.metric("📉 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
     col3.metric("📥 Cobros/Abonos Totales", f"C$ {total_recaudado:,.2f}")
     col4.metric("👥 Socios Activos", f"{total_socios}")
 
     st.markdown("---")
     col_izq, col_der = st.columns(2)
+
     with col_izq:
         st.subheader("📌 Últimos Ahorros Registrados")
         query_ult_ahorros = """
-            SELECT a.fecha as "Fecha", s.nombre as "Socio", a.monto as "Monto (C$)" 
+            SELECT a.fecha as "Fecha", s.nombre as "Socio", a.monto as "Monto (C$)"
             FROM ahorros a 
             JOIN socios s ON a.socio_id = s.id 
             ORDER BY a.id DESC LIMIT 5
         """
         with engine.connect() as conn:
             df_rec_ahorros = pd.read_sql(query_ult_ahorros, conn)
-        st.dataframe(df_rec_ahorros, use_container_width=True)
+            st.dataframe(df_rec_ahorros, use_container_width=True)
 
     with col_der:
         st.subheader("⚠️ Préstamos Activos")
         query_prestamos_act = """
-            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.monto_total as "Total Con Interés (C$)" 
+            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.monto_total as "Total Con Interés (C$)"
             FROM prestamos p 
             JOIN socios s ON p.socio_id = s.id 
             WHERE p.estado = 'Activo'
         """
         with engine.connect() as conn:
             df_rec_prestamos = pd.read_sql(query_prestamos_act, conn)
-        st.dataframe(df_rec_prestamos, use_container_width=True)
+            st.dataframe(df_rec_prestamos, use_container_width=True)
 
 # ==========================================
 # SECCIÓN 2: GESTIÓN DE SOCIOS
@@ -204,10 +206,11 @@ elif opcion == "👥 Socios":
         st.subheader("Socios Registrados")
         with engine.connect() as conn:
             df_socios = pd.read_sql(
-                "SELECT id as \"ID\", nombre as \"Nombre\", telefono as \"Teléfono\", fecha_registro as \"Fecha Registro\", estado as \"Estado\" FROM socios",
+                'SELECT id as "ID", nombre as "Nombre", telefono as "Teléfono", fecha_registro as "Fecha Registro", estado as "Estado" FROM socios',
                 conn,
             )
-        st.dataframe(df_socios, use_container_width=True)
+            st.dataframe(df_socios, use_container_width=True)
+
         if not df_socios.empty:
             st.download_button(
                 label="📥 Exportar Socios a Excel",
@@ -222,9 +225,9 @@ elif opcion == "👥 Socios":
             nombre = st.text_input("Nombre Completo *")
             telefono = st.text_input("Número de Teléfono / WhatsApp")
             fecha_reg = st.date_input("Fecha de Ingreso", datetime.now())
-            submitted = st.form_submit_button("Guardar Socio")
+            enviado = st.form_submit_button("Guardar Socio")
 
-            if submitted:
+            if enviado:
                 if nombre.strip() == "":
                     st.error("El nombre del socio es obligatorio.")
                 else:
@@ -273,14 +276,15 @@ elif opcion == "💵 Ahorros y Cuotas":
         with tab2:
             st.subheader("Historial General de Aportaciones")
             query_ahorros = """
-                SELECT a.id as "ID", s.nombre as "Socio", a.monto as "Monto (C$)", a.fecha as "Fecha", a.nota as "Nota" 
+                SELECT a.id as "ID", s.nombre as "Socio", a.monto as "Monto (C$)", a.fecha as "Fecha", a.nota as "Nota"
                 FROM ahorros a 
                 JOIN socios s ON a.socio_id = s.id 
                 ORDER BY a.fecha DESC
             """
             with engine.connect() as conn:
                 df_hist_ahorros = pd.read_sql(query_ahorros, conn)
-            st.dataframe(df_hist_ahorros, use_container_width=True)
+                st.dataframe(df_hist_ahorros, use_container_width=True)
+
             if not df_hist_ahorros.empty:
                 st.download_button(
                     label="📥 Exportar Ahorros a Excel",
@@ -302,8 +306,8 @@ elif opcion == "🤝 Préstamos":
     else:
         dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
         st.subheader("Nuevo Préstamo")
+        
         col1, col2 = st.columns(2)
-
         with col1:
             socio_prestamo = st.selectbox("Socio Solicitante", list(dict_socios.keys()))
             monto_solicitado = st.number_input("Monto del Préstamo (C$)", min_value=10.0, step=50.0)
@@ -314,13 +318,13 @@ elif opcion == "🤝 Préstamos":
             fecha_prestamo = st.date_input("Fecha de Emisión", datetime.now())
 
         interes_mensual = monto_solicitado * (tasa_interes / 100)
-        interes_total = interes_mensual * plazo_meses
-        monto_total_pagar = monto_solicitado + interes_total
+        intereses_total = interes_mensual * plazo_meses
+        monto_total_pagar = monto_solicitado + intereses_total
         cuota_mensual = monto_total_pagar / plazo_meses
 
         st.info(f"""
         **Resumen del Préstamo:**
-        * **Interés Total Calculado:** C$ {interes_total:,.2f}
+        * **Interés Total Calculado:** C$ {intereses_total:,.2f}
         * **Monto Total a Devolver:** C$ {monto_total_pagar:,.2f}
         * **Cuota Mensual Estimada:** C$ {cuota_mensual:,.2f} / mes
         """)
@@ -339,7 +343,7 @@ elif opcion == "🤝 Préstamos":
                         "monto_prestado": monto_solicitado,
                         "tasa_interes": tasa_interes,
                         "plazo_meses": plazo_meses,
-                        "interes_total": interes_total,
+                        "interes_total": intereses_total,
                         "monto_total": monto_total_pagar,
                         "fecha_inicio": str(fecha_prestamo),
                         "anio": anio_curr
@@ -351,14 +355,16 @@ elif opcion == "🤝 Préstamos":
         st.markdown("---")
         st.subheader("Historial de Préstamos")
         query_p = """
-            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto Prestado (C$)", p.interes_total as "Interés Total (C$)", p.monto_total as "Total a Pagar (C$)", p.fecha_inicio as "Fecha", p.estado as "Estado" 
+            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto Prestado (C$)", 
+                   p.interes_total as "Interés Total (C$)", p.monto_total as "Total a Pagar (C$)", 
+                   p.fecha_inicio as "Fecha", p.estado as "Estado"
             FROM prestamos p 
             JOIN socios s ON p.socio_id = s.id 
             ORDER BY p.id DESC
         """
         with engine.connect() as conn:
             df_prestamos_hist = pd.read_sql(query_p, conn)
-        st.dataframe(df_prestamos_hist, use_container_width=True)
+            st.dataframe(df_prestamos_hist, use_container_width=True)
 
         if not df_prestamos_hist.empty:
             st.download_button(
@@ -374,7 +380,7 @@ elif opcion == "🤝 Préstamos":
 elif opcion == "📖 Pagos de Préstamos":
     st.title("📖 Registro de Abonos y Pagos")
     query_activos = """
-        SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_total || ' total)' as label 
+        SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_total || ' total)' as label
         FROM prestamos p 
         JOIN socios s ON p.socio_id = s.id 
         WHERE p.estado = 'Activo'
@@ -403,7 +409,7 @@ elif opcion == "📖 Pagos de Préstamos":
                     
                     df_total_p = pd.read_sql(text(f"SELECT COALESCE(SUM(monto_pagado), 0) as suma FROM pagos WHERE prestamo_id = {p_id}"), conn)
                     pagado_hasta_hoy = float(df_total_p["suma"].iloc[0])
-
+                    
                     df_monto_orig = pd.read_sql(text(f"SELECT monto_total FROM prestamos WHERE id = {p_id}"), conn)
                     monto_orig = float(df_monto_orig["monto_total"].iloc[0])
 
@@ -411,14 +417,15 @@ elif opcion == "📖 Pagos de Préstamos":
                         conn.execute(text(f"UPDATE prestamos SET estado = 'Saldado' WHERE id = {p_id}"))
                         st.balloons()
                         st.success("¡El préstamo ha sido saldado completamente!")
-
-                st.success("Abono registrado correctamente.")
+                    else:
+                        st.success("Abono registrado correctamente.")
                 st.rerun()
 
         st.markdown("---")
         st.subheader("Historial de Pagos Recibidos")
         query_pagos = """
-            SELECT pg.id as "ID", s.nombre as "Socio", pg.prestamo_id as "ID Préstamo", pg.monto_pagado as "Monto Pagado (C$)", pg.tipo as "Tipo", pg.fecha as "Fecha" 
+            SELECT pg.id as "ID", s.nombre as "Socio", pg.prestamo_id as "ID Préstamo", 
+                   pg.monto_pagado as "Monto Pagado (C$)", pg.tipo as "Tipo", pg.fecha as "Fecha"
             FROM pagos pg 
             JOIN prestamos p ON pg.prestamo_id = p.id 
             JOIN socios s ON p.socio_id = s.id 
@@ -426,7 +433,7 @@ elif opcion == "📖 Pagos de Préstamos":
         """
         with engine.connect() as conn:
             df_pagos_hist = pd.read_sql(query_pagos, conn)
-        st.dataframe(df_pagos_hist, use_container_width=True)
+            st.dataframe(df_pagos_hist, use_container_width=True)
 
         if not df_pagos_hist.empty:
             st.download_button(
@@ -462,27 +469,28 @@ elif opcion == "📄 Estado de Cuenta":
 
         st.markdown("---")
         st.markdown(f"## 🏦 Estado de Cuenta - **{socio_sel}**")
-        st.markdown(f"**Fecha de Emisión:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        st.markdown(f"**Fecha de emisión:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         c1, c2 = st.columns(2)
-        c1.metric("💰 Total Capital Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
+        c1.metric("💵 Capital Total Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
         c2.metric("📉 Préstamos Activos", f"C$ {total_prestado_socio:,.2f}")
 
         st.markdown("### 📜 Detalle de Ahorros")
         with engine.connect() as conn:
-            df_ahorros_det = pd.read_sql(f"SELECT fecha as \"Fecha\", monto as \"Monto (C$)\", nota as \"Nota\" FROM ahorros WHERE socio_id = {s_id} ORDER BY fecha DESC", conn)
-        st.dataframe(df_ahorros_det, use_container_width=True)
+            df_ahorros_det = pd.read_sql(f'SELECT fecha as "Fecha", monto as "Monto (C$)", nota as "Nota" FROM ahorros WHERE socio_id = {s_id} ORDER BY fecha DESC', conn)
+            st.dataframe(df_ahorros_det, use_container_width=True)
 
         st.markdown("### 🤝 Detalle de Préstamos")
         with engine.connect() as conn:
-            df_prestamos_det = pd.read_sql(f"SELECT id as \"ID Préstamo\", monto_prestado as \"Monto (C$)\", interes_total as \"Interés Total (C$)\", monto_total as \"Total a Pagar (C$)\", estado as \"Estado\", fecha_inicio as \"Fecha\" FROM prestamos WHERE socio_id = {s_id}", conn)
-        st.dataframe(df_prestamos_det, use_container_width=True)
+            df_prestamos_det = pd.read_sql(f'SELECT id as "ID Préstamo", monto_prestado as "Monto (C$)", interes_total as "Interés Total (C$)", monto_total as "Total a Pagar (C$)", estado as "Estado", fecha_inicio as "Fecha" FROM prestamos WHERE socio_id = {s_id}', conn)
+            st.dataframe(df_prestamos_det, use_container_width=True)
 
         if not df_ahorros_det.empty or not df_prestamos_det.empty:
             output_socio = io.BytesIO()
             with pd.ExcelWriter(output_socio, engine="openpyxl") as writer:
                 df_ahorros_det.to_excel(writer, index=False, sheet_name="Ahorros")
                 df_prestamos_det.to_excel(writer, index=False, sheet_name="Prestamos")
+
             st.download_button(
                 label=f"📥 Imprimir / Descargar Estado de Cuenta de {socio_sel} (Excel)",
                 data=output_socio.getvalue(),
@@ -505,7 +513,7 @@ elif opcion == "🎉 Liquidación Anual":
         total_intereses_ganados = float(df_tot_intereses["total"].iloc[0])
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("💰 Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
+    c1.metric("💵 Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
     c2.metric("📈 Intereses Totales Ganados", f"C$ {total_intereses_ganados:,.2f}")
     c3.metric("🏦 Gran Total en Caja a Repartir", f"C$ {(gran_total_ahorrado + total_intereses_ganados):,.2f}")
 
@@ -515,10 +523,10 @@ elif opcion == "🎉 Liquidación Anual":
     else:
         st.subheader("📋 Tabla Oficial de Reparto por Socio")
         query_liq = """
-            SELECT s.id as "ID", s.nombre as "Socio", COALESCE(SUM(a.monto), 0) as "Ahorro_Total" 
+            SELECT s.id as "ID", s.nombre as "Socio", COALESCE(SUM(a.monto), 0) as "Ahorro_Total"
             FROM socios s 
             LEFT JOIN ahorros a ON s.id = a.socio_id 
-            WHERE s.estado = 'Activo' 
+            WHERE s.estado = 'Activo'
             GROUP BY s.id, s.nombre
         """
         with engine.connect() as conn:
@@ -563,26 +571,23 @@ elif opcion == "🔒 Cierre Mensual y Anual":
             anio_sel = st.number_input("Seleccionar Año", min_value=2020, max_value=2100, value=datetime.now().year)
 
         query_mensual_ahorro = """
-            SELECT COALESCE(SUM(monto), 0) as total 
-            FROM ahorros 
+            SELECT COALESCE(SUM(monto), 0) as total FROM ahorros 
             WHERE EXTRACT(MONTH FROM fecha) = :mes AND EXTRACT(YEAR FROM fecha) = :anio
         """
         query_mensual_pagos = """
-            SELECT COALESCE(SUM(monto_pagado), 0) as total 
-            FROM pagos 
+            SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos 
             WHERE EXTRACT(MONTH FROM fecha) = :mes AND EXTRACT(YEAR FROM fecha) = :anio
         """
         with engine.connect() as conn:
             tot_ahorro_m = float(pd.read_sql(text(query_mensual_ahorro), conn, params={"mes": mes_sel, "anio": anio_sel})["total"].iloc[0])
             tot_pagos_m = float(pd.read_sql(text(query_mensual_pagos), conn, params={"mes": mes_sel, "anio": anio_sel})["total"].iloc[0])
 
-        st.metric(f"💰 Ahorros del Mes ({mes_sel}/{anio_sel})", f"C$ {tot_ahorro_m:,.2f}")
+        st.metric(f"💵 Ahorros del Mes ({mes_sel}/{anio_sel})", f"C$ {tot_ahorro_m:,.2f}")
         st.metric(f"📥 Pagos/Cobros Recibidos en el Mes ({mes_sel}/{anio_sel})", f"C$ {tot_pagos_m:,.2f}")
 
     with tab2:
         st.subheader("⚠️ Cerrar Año Lectivo y Reiniciar Ciclo")
-        st.warning("Al ejecutar el Cierre Anual, se registrará el resumen de este periodo en el historial. Los balances de ahorro se archivarán para empezar un nuevo ciclo el próximo año manteniendo la lista de socios.")
-        
+        st.warning("Al ejecutar el Cierre Anual, se registrará el resumen de este período en el historial. Los saldos de ahorro se archivarán para empezar un nuevo ciclo el próximo año manteniendo la lista de socios.")
         anio_cierre = st.number_input("Año a Cerrar", min_value=2020, max_value=2100, value=datetime.now().year, key="cierre_anio")
 
         if st.button("🚀 Ejecutar Cierre y Reiniciar Año"):
@@ -597,7 +602,7 @@ elif opcion == "🔒 Cierre Mensual y Anual":
                     text("INSERT INTO cierres_anuales (anio, total_ahorrado, total_intereses) VALUES (:anio, :tot_a, :tot_i)"),
                     {"anio": anio_cierre, "tot_a": tot_a, "tot_i": tot_i}
                 )
-                # Archivar limpiando tablas de la caja activa
+                # Limpiar tablas de caja activa
                 conn.execute(text("DELETE FROM pagos;"))
                 conn.execute(text("DELETE FROM prestamos;"))
                 conn.execute(text("DELETE FROM ahorros;"))
@@ -608,5 +613,5 @@ elif opcion == "🔒 Cierre Mensual y Anual":
         st.markdown("---")
         st.subheader("📚 Historial de Cierres Anuales")
         with engine.connect() as conn:
-            df_hist_cierres = pd.read_sql("SELECT id as \"ID\", anio as \"Año\", total_ahorrado as \"Total Ahorrado (C$)\", total_intereses as \"Intereses (C$)\", fecha_cierre as \"Fecha de Cierre\" FROM cierres_anuales ORDER BY anio DESC", conn)
-        st.dataframe(df_hist_cierres, use_container_width=True)
+            df_hist_cierres = pd.read_sql('SELECT id as "ID", anio as "Año", total_ahorrado as "Total Ahorrado (C$)", total_intereses as "Intereses (C$)", fecha_cierre as "Fecha de Cierre" FROM cierres_anuales ORDER BY anio DESC', conn)
+            st.dataframe(df_hist_cierres, use_container_width=True)
