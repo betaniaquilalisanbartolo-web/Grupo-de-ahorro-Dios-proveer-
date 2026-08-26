@@ -1,5 +1,6 @@
-import sqlite3
 from datetime import datetime
+import io
+import sqlite3
 import pandas as pd
 import streamlit as st
 
@@ -9,6 +10,34 @@ import streamlit as st
 st.set_page_config(
     page_title="Caja de Ahorro Comunitario", page_icon="💰", layout="wide"
 )
+
+# ==========================================
+# AUTENTICACIÓN / CONTRASEÑA DE ADMINISTRADOR
+# ==========================================
+# Contraseña de acceso único (puedes cambiarla aquí)
+ADMIN_PASSWORD = "admin123"
+
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+
+st.sidebar.title("🔒 Control de Acceso")
+
+if not st.session_state.authenticated:
+    password_input = st.sidebar.text_input("Contraseña de Administrador", type="password")
+    if st.sidebar.button("Iniciar Sesión"):
+        if password_input == ADMIN_PASSWORD:
+            st.session_state.authenticated = True
+            st.sidebar.success("¡Acceso concedido!")
+            st.rerun()
+        else:
+            st.sidebar.error("Contraseña incorrecta.")
+    st.warning("⚠️ Debes iniciar sesión como Administrador en la barra lateral para acceder al sistema.")
+    st.stop()
+else:
+    st.sidebar.success("Sesión activa como Administrador")
+    if st.sidebar.button("Cerrar Sesión"):
+        st.session_state.authenticated = False
+        st.rerun()
 
 
 # ==========================================
@@ -83,8 +112,19 @@ init_db()
 
 
 # ==========================================
+# FUNCIÓN UTILITARIA PARA EXPORTAR A EXCEL
+# ==========================================
+def to_excel(df: pd.DataFrame) -> bytes:
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="Reporte")
+    return output.getvalue()
+
+
+# ==========================================
 # MENÚ NAVEGACIÓN LATERAL
 # ==========================================
+st.sidebar.markdown("---")
 st.sidebar.title("🏦 Menú Principal")
 opcion = st.sidebar.radio(
     "Selecciona una sección:",
@@ -104,9 +144,7 @@ opcion = st.sidebar.radio(
 # ==========================================
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
-    st.caption(
-        "Resumen financiero en tiempo real del grupo de ahorro comunitario."
-    )
+    st.caption("Resumen financiero en tiempo real expresado en Córdobas (C$).")
 
     conn = get_connection()
 
@@ -128,9 +166,9 @@ if opcion == "📊 Panel General":
     total_socios = df_socios["total"].iloc[0] or 0
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("💰 Fondo Total Ahorrado", f"${total_ahorrado:,.2f}")
-    col2.metric("📉 Capital Prestado Activo", f"${total_prestado:,.2f}")
-    col3.metric("📥 Cobros/Abonos Totales", f"${total_recaudado:,.2f}")
+    col1.metric("💰 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
+    col2.metric("📉 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
+    col3.metric("📥 Cobros/Abonos Totales", f"C$ {total_recaudado:,.2f}")
     col4.metric("👥 Socios Activos", f"{total_socios}")
 
     st.markdown("---")
@@ -140,7 +178,7 @@ if opcion == "📊 Panel General":
     with col_izq:
         st.subheader("📌 Últimos Ahorros Registrados")
         query_ult_ahorros = """
-            SELECT a.fecha as Fecha, s.nombre as Socio, a.monto as Monto
+            SELECT a.fecha as Fecha, s.nombre as Socio, a.monto as 'Monto (C$)'
             FROM ahorros a
             JOIN socios s ON a.socio_id = s.id
             ORDER BY a.id DESC LIMIT 5
@@ -151,7 +189,7 @@ if opcion == "📊 Panel General":
     with col_der:
         st.subheader("⚠️ Préstamos Activos")
         query_prestamos_act = """
-            SELECT p.id as ID, s.nombre as Socio, p.monto_prestado as Monto, p.monto_total as Total_Con_Interes
+            SELECT p.id as ID, s.nombre as Socio, p.monto_prestado as 'Monto (C$)', p.monto_total as 'Total Con Interés (C$)'
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
             WHERE p.estado = 'Activo'
@@ -179,6 +217,14 @@ elif opcion == "👥 Socios":
             conn,
         )
         st.dataframe(df_socios, use_container_width=True)
+
+        if not df_socios.empty:
+            st.download_button(
+                label="📥 Exportar Socios a Excel",
+                data=to_excel(df_socios),
+                file_name=f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
     with tab2:
         st.subheader("Formulario de Registro")
@@ -216,28 +262,18 @@ elif opcion == "💵 Ahorros y Cuotas":
     )
 
     if df_socios.empty:
-        st.warning(
-            "Primero debes registrar socios en la sección '👥 Socios'."
-        )
+        st.warning("Primero debes registrar socios en la sección '👥 Socios'.")
     else:
-        tab1, tab2 = st.tabs(
-            ["➕ Depositar Ahorro", "📜 Historial de Ahorros"]
-        )
+        tab1, tab2 = st.tabs(["➕ Depositar Ahorro", "📜 Historial de Ahorros"])
 
         with tab1:
             st.subheader("Registrar Nueva Aportación")
             dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
 
             with st.form("form_ahorro", clear_on_submit=True):
-                socio_nom = st.selectbox(
-                    "Selecciona el Socio *", list(dict_socios.keys())
-                )
-                monto_ahorro = st.number_input(
-                    "Monto Ahorrado ($) *", min_value=1.0, step=5.0
-                )
-                fecha_ahorro = st.date_input(
-                    "Fecha del Depósito", datetime.now()
-                )
+                socio_nom = st.selectbox("Selecciona el Socio *", list(dict_socios.keys()))
+                monto_ahorro = st.number_input("Monto Ahorrado (C$) *", min_value=1.0, step=10.0)
+                fecha_ahorro = st.date_input("Fecha del Depósito", datetime.now())
                 nota_ahorro = st.text_input("Nota / Observación (Opcional)")
 
                 btn_ahorro = st.form_submit_button("Registrar Depósito")
@@ -246,29 +282,30 @@ elif opcion == "💵 Ahorros y Cuotas":
                     cursor = conn.cursor()
                     cursor.execute(
                         "INSERT INTO ahorros (socio_id, monto, fecha, nota) VALUES (?, ?, ?, ?)",
-                        (
-                            socio_id,
-                            monto_ahorro,
-                            str(fecha_ahorro),
-                            nota_ahorro,
-                        ),
+                        (socio_id, monto_ahorro, str(fecha_ahorro), nota_ahorro),
                     )
                     conn.commit()
-                    st.success(
-                        f"Ahorro de ${monto_ahorro:,.2f} registrado para {socio_nom}."
-                    )
+                    st.success(f"Ahorro de C$ {monto_ahorro:,.2f} registrado para {socio_nom}.")
                     st.rerun()
 
         with tab2:
             st.subheader("Historial General de Aportaciones")
             query_ahorros = """
-                SELECT a.id as ID, s.nombre as Socio, a.monto as 'Monto ($)', a.fecha as Fecha, a.nota as Nota
+                SELECT a.id as ID, s.nombre as Socio, a.monto as 'Monto (C$)', a.fecha as Fecha, a.nota as Nota
                 FROM ahorros a
                 JOIN socios s ON a.socio_id = s.id
                 ORDER BY a.fecha DESC
             """
             df_hist_ahorros = pd.read_sql(query_ahorros, conn)
             st.dataframe(df_hist_ahorros, use_container_width=True)
+
+            if not df_hist_ahorros.empty:
+                st.download_button(
+                    label="📥 Exportar Ahorros a Excel",
+                    data=to_excel(df_hist_ahorros),
+                    file_name=f"reporte_ahorros_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
 
     conn.close()
 
@@ -293,26 +330,13 @@ elif opcion == "🤝 Préstamos":
 
         col1, col2 = st.columns(2)
         with col1:
-            socio_prestamo = st.selectbox(
-                "Socio Solicitante", list(dict_socios.keys())
-            )
-            monto_solicitado = st.number_input(
-                "Monto del Préstamo ($)", min_value=10.0, step=50.0
-            )
-            tasa_interes = st.number_input(
-                "Tasa de Interés Mensual (%)",
-                min_value=0.0,
-                value=5.0,
-                step=0.5,
-            )
+            socio_prestamo = st.selectbox("Socio Solicitante", list(dict_socios.keys()))
+            monto_solicitado = st.number_input("Monto del Préstamo (C$)", min_value=10.0, step=50.0)
+            tasa_interes = st.number_input("Tasa de Interés Mensual (%)", min_value=0.0, value=5.0, step=0.5)
 
         with col2:
-            plazo_meses = st.number_input(
-                "Plazo en Meses", min_value=1, max_value=36, value=6
-            )
-            fecha_prestamo = st.date_input(
-                "Fecha de Emisión", datetime.now()
-            )
+            plazo_meses = st.number_input("Plazo en Meses", min_value=1, max_value=36, value=6)
+            fecha_prestamo = st.date_input("Fecha de Emisión", datetime.now())
 
         interes_mensual = monto_solicitado * (tasa_interes / 100)
         interes_total = interes_mensual * plazo_meses
@@ -321,9 +345,9 @@ elif opcion == "🤝 Préstamos":
 
         st.info(f"""
         **Resumen del Préstamo:**
-        * **Interés Total Calculado:** ${interes_total:,.2f}
-        * **Monto Total a Devolver:** ${monto_total_pagar:,.2f}
-        * **Cuota Mensual Estimada:** ${cuota_mensual:,.2f} / mes
+        * **Interés Total Calculado:** C$ {interes_total:,.2f}
+        * **Monto Total a Devolver:** C$ {monto_total_pagar:,.2f}
+        * **Cuota Mensual Estimada:** C$ {cuota_mensual:,.2f} / mes
         """)
 
         if st.button("Aprobar y Registrar Préstamo"):
@@ -345,18 +369,28 @@ elif opcion == "🤝 Préstamos":
             )
             conn.commit()
             st.success(f"Préstamo registrado exitosamente para {socio_prestamo}")
+            st.rerun()
 
         st.markdown("---")
         st.subheader("Historial de Préstamos")
         query_p = """
-            SELECT p.id as ID, s.nombre as Socio, p.monto_prestado as 'Monto Original', 
-                   p.interes_total as Interés, p.monto_total as 'Total a Pagar', 
+            SELECT p.id as ID, s.nombre as Socio, p.monto_prestado as 'Monto Prestado (C$)', 
+                   p.interes_total as 'Interés Total (C$)', p.monto_total as 'Total a Pagar (C$)', 
                    p.fecha_inicio as Fecha, p.estado as Estado
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
             ORDER BY p.id DESC
         """
-        st.dataframe(pd.read_sql(query_p, conn), use_container_width=True)
+        df_prestamos_hist = pd.read_sql(query_p, conn)
+        st.dataframe(df_prestamos_hist, use_container_width=True)
+
+        if not df_prestamos_hist.empty:
+            st.download_button(
+                label="📥 Exportar Préstamos a Excel",
+                data=to_excel(df_prestamos_hist),
+                file_name=f"reporte_prestamos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
     conn.close()
 
@@ -370,7 +404,7 @@ elif opcion == "📑 Pagos de Préstamos":
     conn = get_connection()
 
     query_activos = """
-        SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' ($' || p.monto_total || ' total)' as label
+        SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_total || ' total)' as label
         FROM prestamos p
         JOIN socios s ON p.socio_id = s.id
         WHERE p.estado = 'Activo'
@@ -380,20 +414,12 @@ elif opcion == "📑 Pagos de Préstamos":
     if df_prestamos_act.empty:
         st.info("No hay préstamos activos pendientes de pago.")
     else:
-        dict_prestamos = dict(
-            zip(df_prestamos_act["label"], df_prestamos_act["id"])
-        )
+        dict_prestamos = dict(zip(df_prestamos_act["label"], df_prestamos_act["id"]))
 
         with st.form("form_pago", clear_on_submit=True):
-            prestamo_sel = st.selectbox(
-                "Selecciona el Préstamo *", list(dict_prestamos.keys())
-            )
-            monto_pago = st.number_input(
-                "Monto del Pago/Abono ($) *", min_value=1.0, step=10.0
-            )
-            tipo_pago = st.selectbox(
-                "Tipo de Abono", ["Capital", "Interés", "Completo"]
-            )
+            prestamo_sel = st.selectbox("Selecciona el Préstamo *", list(dict_prestamos.keys()))
+            monto_pago = st.number_input("Monto del Pago/Abono (C$) *", min_value=1.0, step=10.0)
+            tipo_pago = st.selectbox("Tipo de Abono", ["Capital", "Interés", "Completo"])
             fecha_pago = st.date_input("Fecha del Pago", datetime.now())
 
             btn_pago = st.form_submit_button("Registrar Pago")
@@ -423,9 +449,7 @@ elif opcion == "📑 Pagos de Préstamos":
                         (p_id,),
                     )
                     st.balloons()
-                    st.success(
-                        "¡El préstamo ha sido saldado completamente!"
-                    )
+                    st.success("¡El préstamo ha sido saldado completamente!")
 
                 conn.commit()
                 st.success("Abono registrado correctamente.")
@@ -435,13 +459,22 @@ elif opcion == "📑 Pagos de Préstamos":
         st.subheader("Historial de Pagos Recibidos")
         query_pagos = """
             SELECT pg.id as ID, s.nombre as Socio, pg.prestamo_id as 'ID Préstamo', 
-                   pg.monto_pagado as 'Monto Pagado', pg.tipo as Tipo, pg.fecha as Fecha
+                   pg.monto_pagado as 'Monto Pagado (C$)', pg.tipo as Tipo, pg.fecha as Fecha
             FROM pagos pg
             JOIN prestamos p ON pg.prestamo_id = p.id
             JOIN socios s ON p.socio_id = s.id
             ORDER BY pg.id DESC
         """
-        st.dataframe(pd.read_sql(query_pagos, conn), use_container_width=True)
+        df_pagos_hist = pd.read_sql(query_pagos, conn)
+        st.dataframe(df_pagos_hist, use_container_width=True)
+
+        if not df_pagos_hist.empty:
+            st.download_button(
+                label="📥 Exportar Pagos a Excel",
+                data=to_excel(df_pagos_hist),
+                file_name=f"reporte_pagos_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
     conn.close()
 
@@ -450,10 +483,8 @@ elif opcion == "📑 Pagos de Préstamos":
 # SECCIÓN 6: LIQUIDACIÓN ANUAL DE SOCIOS
 # ==========================================
 elif opcion == "🎉 Liquidación Anual":
-    st.title("🎉 Cálculo de Liquidación de Fin de Año")
-    st.caption(
-        "Reparto transparente de capital e intereses acumulados para cada socio."
-    )
+    st.title("🎉 Cálculo de Liquidación Automática de Fin de Año")
+    st.caption("Reparto transparente de capital prestado/alquilado e intereses generados para cada socio.")
 
     conn = get_connection()
 
@@ -461,7 +492,7 @@ elif opcion == "🎉 Liquidación Anual":
     df_tot_ahorro = pd.read_sql("SELECT SUM(monto) as total FROM ahorros", conn)
     gran_total_ahorrado = df_tot_ahorro["total"].iloc[0] or 0.0
 
-    # Total de Intereses Ganados (recaudados de préstamos o cuotas)
+    # Total de Intereses Ganados (Recaudados de pagos tipo Interés o Completo)
     df_tot_intereses = pd.read_sql(
         "SELECT SUM(monto_pagado) as total FROM pagos WHERE tipo = 'Interés' OR tipo = 'Completo'",
         conn,
@@ -469,19 +500,17 @@ elif opcion == "🎉 Liquidación Anual":
     total_intereses_ganados = df_tot_intereses["total"].iloc[0] or 0.0
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("💰 Fondo Total Ahorrado", f"${gran_total_ahorrado:,.2f}")
-    c2.metric("📈 Intereses Totales Ganados", f"${total_intereses_ganados:,.2f}")
+    c1.metric("💰 Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
+    c2.metric("📈 Intereses Totales Ganados", f"C$ {total_intereses_ganados:,.2f}")
     c3.metric(
         "🏦 Gran Total en Caja a Repartir",
-        f"${(gran_total_ahorrado + total_intereses_ganados):,.2f}",
+        f"C$ {(gran_total_ahorrado + total_intereses_ganados):,.2f}",
     )
 
     st.markdown("---")
 
     if gran_total_ahorrado == 0:
-        st.warning(
-            "No hay aportaciones de ahorro registradas aún para calcular la liquidación."
-        )
+        st.warning("No hay aportaciones de ahorro registradas aún para calcular la liquidación.")
     else:
         st.subheader("📋 Tabla Oficial de Reparto por Socio")
 
@@ -495,40 +524,30 @@ elif opcion == "🎉 Liquidación Anual":
         """
         df_liq = pd.read_sql(query_liq, conn)
 
-        # Cálculo de porcentajes y reparto
-        df_liq["Participación (%)"] = (
-            df_liq["Ahorro_Total"] / gran_total_ahorrado
-        ) * 100
-        df_liq["Interés Ganado ($)"] = (
-            df_liq["Participación (%)"] / 100
-        ) * total_intereses_ganados
-        df_liq["Total a Entregar ($)"] = (
-            df_liq["Ahorro_Total"] + df_liq["Interés Ganado ($)"]
-        )
+        # Cálculo automático de participaciones y ganancias
+        df_liq["Participación (%)"] = (df_liq["Ahorro_Total"] / gran_total_ahorrado) * 100
+        df_liq["Interés Ganado (C$)"] = (df_liq["Participación (%)"] / 100) * total_intereses_ganados
+        df_liq["Total a Entregar (C$)"] = df_liq["Ahorro_Total"] + df_liq["Interés Ganado (C$)"]
 
-        # Formatear columnas para visualización clara
+        # Formato para visualización en pantalla
         df_display = df_liq.copy()
-        df_display["Ahorro_Total"] = df_display["Ahorro_Total"].map(
-            "${:,.2f}".format
-        )
-        df_display["Participación (%)"] = df_display["Participación (%)"].map(
-            "{:,.2f}%".format
-        )
-        df_display["Interés Ganado ($)"] = df_display["Interés Ganado ($)"].map(
-            "${:,.2f}".format
-        )
-        df_display["Total a Entregar ($)"] = df_display[
-            "Total a Entregar ($)"
-        ].map("${:,.2f}".format)
-
-        df_display = df_display.rename(
-            columns={"Ahorro_Total": "Capital Ahorrado ($)"}
-        )
+        df_display["Ahorro_Total"] = df_display["Ahorro_Total"].map("C$ {:,.2f}".format)
+        df_display["Participación (%)"] = df_display["Participación (%)"].map("{:,.2f}%".format)
+        df_display["Interés Ganado (C$)"] = df_display["Interés Ganado (C$)"].map("C$ {:,.2f}".format)
+        df_display["Total a Entregar (C$)"] = df_display["Total a Entregar (C$)"].map("C$ {:,.2f}".format)
+        df_display = df_display.rename(columns={"Ahorro_Total": "Capital Ahorrado (C$)"})
 
         st.dataframe(df_display, use_container_width=True)
 
+        st.download_button(
+            label="📥 Exportar Tabla de Liquidación a Excel",
+            data=to_excel(df_liq),
+            file_name=f"liquidacion_anual_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
         st.success(
-            "💡 **Fórmula aplicada:** El total de intereses generados se distribuye proporcionalmente al porcentaje del capital que cada socio aportó durante el periodo."
+            "💡 **Cálculo Automático Aplicado:** Los intereses totales generados por el dinero prestado/alquilado se distribuyen proporcionalmente al capital aportado por cada socio."
         )
 
     conn.close()
