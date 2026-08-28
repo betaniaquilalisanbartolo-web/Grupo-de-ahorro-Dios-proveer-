@@ -17,10 +17,14 @@ st.set_page_config(
 # ==========================================
 # CONEXIÓN A LA BASE DE DATOS (SUPABASE)
 # ==========================================
-# Asegúrate de tener configurado tu .streamlit/secrets.toml con DB_URL
 @st.cache_resource
 def get_engine():
-    db_url = st.secrets.get("DB_URL", "postgresql://postgres:password@localhost:5432/postgres")
+    # Lee desde la estructura [postgres] url presente en tus Secrets de Streamlit Cloud
+    if "postgres" in st.secrets and "url" in st.secrets["postgres"]:
+        db_url = st.secrets["postgres"]["url"]
+    else:
+        db_url = st.secrets.get("DB_URL", "postgresql://postgres:password@localhost:5432/postgres")
+        
     return create_engine(db_url, pool_pre_ping=True)
 
 engine = get_engine()
