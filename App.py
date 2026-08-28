@@ -527,6 +527,7 @@ elif opcion == "💵 Ahorros y Cuotas":
                         st.warning("Registro de ahorro eliminado correctamente.")
                         st.rerun()
 
+    
 # ==========================================
 # SECCIÓN 4: PRÉSTAMOS
 # ==========================================
@@ -539,7 +540,7 @@ elif opcion == "🤝 Préstamos":
         st.warning("Registra socios antes de procesar préstamos.")
     else:
         dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
-        tab1, tab2, tab3 = st.tabs(["➕ Nuevo Préstamo", "📜 Historial", "✏️ Editar Préstamo"])
+        tab1, tab2, tab3 = st.tabs(["➕ Nuevo Préstamo", "📜 Historial", "✏️ Editar / Eliminar Préstamo"])
 
         with tab1:
             st.subheader("Nuevo Préstamo")
@@ -608,7 +609,7 @@ elif opcion == "🤝 Préstamos":
                 )
 
         with tab3:
-            st.subheader("Modificar Ficha de Préstamo")
+            st.subheader("Modificar o Eliminar Préstamo")
             query_edit_p = """
                 SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_prestado || ')' as label, p.socio_id, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, p.estado
                 FROM prestamos p JOIN socios s ON p.socio_id = s.id
@@ -618,10 +619,10 @@ elif opcion == "🤝 Préstamos":
                 df_edit_p = pd.read_sql(text(query_edit_p), conn)
 
             if df_edit_p.empty:
-                st.info("No hay préstamos para editar.")
+                st.info("No hay préstamos para editar o eliminar.")
             else:
                 dict_edit_p = dict(zip(df_edit_p["label"], df_edit_p["id"]))
-                prestamo_sel_e = st.selectbox("Selecciona el Préstamo a Editar:", list(dict_edit_p.keys()))
+                prestamo_sel_e = st.selectbox("Selecciona el Préstamo:", list(dict_edit_p.keys()))
                 id_p_sel = dict_edit_p[prestamo_sel_e]
                 reg_p = df_edit_p[df_edit_p["id"] == id_p_sel].iloc[0]
 
@@ -637,7 +638,11 @@ elif opcion == "🤝 Préstamos":
                     e_int_tot = e_int_m * e_plazo_p
                     e_monto_tot = e_monto_p + e_int_tot
 
-                    btn_guardar_p = st.form_submit_button("💾 Guardar Cambios")
+                    col_btn1, col_btn2 = st.columns(2)
+                    with col_btn1:
+                        btn_guardar_p = st.form_submit_button("💾 Guardar Cambios")
+                    with col_btn2:
+                        btn_eliminar_p = st.form_submit_button("🗑️ Eliminar Préstamo")
 
                     if btn_guardar_p:
                         with engine.begin() as conn:
@@ -662,6 +667,17 @@ elif opcion == "🤝 Préstamos":
                         registrar_bitacora(f"Edición de préstamo ID {id_p_sel}")
                         st.success("¡Préstamo modificado correctamente!")
                         st.rerun()
+
+                    if btn_eliminar_p:
+                        with engine.begin() as conn:
+                            # Primero eliminar pagos asociados para evitar errores de clave foránea
+                            conn.execute(text("DELETE FROM pagos WHERE prestamo_id = :id"), {"id": id_p_sel})
+                            # Luego eliminar el préstamo
+                            conn.execute(text("DELETE FROM prestamos WHERE id = :id"), {"id": id_p_sel})
+                        registrar_bitacora(f"Eliminación de préstamo duplicado ID {id_p_sel}")
+                        st.warning("Préstamo eliminado correctamente.")
+                        st.rerun()
+
 
 # ==========================================
 # SECCIÓN 5: SIMULADOR DE PRÉSTAMOS
