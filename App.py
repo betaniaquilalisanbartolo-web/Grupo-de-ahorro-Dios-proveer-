@@ -320,40 +320,13 @@ if opcion == "📊 Panel General":
             file_name=f"caja_ahorro_respaldo_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
-    st.markdown("---")
-    col_izq, col_der = st.columns(2)
-    with col_izq:
-        st.subheader("📌 Últimos Ahorros Registrados")
-        query_ult_ahorros = """
-            SELECT a.fecha as "Fecha", s.nombre as "Socio", a.monto as "Monto (C$)"
-            FROM ahorros a
-            JOIN socios s ON a.socio_id = s.id
-            ORDER BY a.id DESC
-            LIMIT 5
-        """
-        with engine.connect() as conn:
-            df_rec_ahorros = pd.read_sql(text(query_ult_ahorros), conn)
-        st.dataframe(df_rec_ahorros, use_container_width=True)
-
-    with col_der:
-        st.subheader("⚠️ Préstamos Activos")
-        query_prestamos_act = """
-            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.monto_total as "Total Con Interés (C$)"
-            FROM prestamos p
-            JOIN socios s ON p.socio_id = s.id
-            WHERE p.estado = 'Activo'
-        """
-        with engine.connect() as conn:
-            df_rec_prestamos = pd.read_sql(text(query_prestamos_act), conn)
-        st.dataframe(df_rec_prestamos, use_container_width=True)
-
-# ==========================================
+        
+        # ==========================================
 # SECCIÓN 2: GESTIÓN DE SOCIOS
 # ==========================================
 elif opcion == "👥 Socios":
     st.title("👥 Control de Socios")
-    tab1, tab2, tab3 = st.tabs(["📋 Listado de Socios", "➕ Registrar Nuevo Socio", "✏️ Editar / Modificar Socio"])
+    tab1, tab2, tab3 = st.tabs(["📋 Listado de Socios", "➕ Registrar Nuevo Socio", "✏️ Editar / Eliminar Socio"])
 
     with tab1:
         st.subheader("Socios Registrados")
@@ -393,15 +366,16 @@ elif opcion == "👥 Socios":
                     st.rerun()
 
     with tab3:
-        st.subheader("Modificar Datos de un Socio Existente")
+        st.subheader("Modificar o Eliminar Socio")
         with engine.connect() as conn:
-            df_s_edit = pd.read_sql(text("SELECT id, nombre, telefono, fecha_registro, estado FROM socios ORDER BY nombre ASC"), conn)
+            df_s_edit = pd.read_sql(text("SELECT id, nombre, telefono, fecha_registro, estado FROM socios ORDER BY id DESC"), conn)
 
         if df_s_edit.empty:
-            st.info("No hay socios registrados para editar.")
+            st.info("No hay socios registrados para editar o eliminar.")
         else:
-            dict_s_edit = dict(zip(df_s_edit["nombre"], df_s_edit["id"]))
-            socio_sel = st.selectbox("Selecciona el Socio a Editar:", list(dict_s_edit.keys()))
+            # Mostramos el ID junto al nombre para identificar fácilmente al duplicado
+            dict_s_edit = dict(zip([f"ID #{row['id']} - {row['nombre']}" for _, row in df_s_edit.iterrows()], df_s_edit["id"]))
+            socio_sel = st.selectbox("Selecciona el Socio:", list(dict_s_edit.keys()))
             id_socio_sel = dict_s_edit[socio_sel]
             datos_socio = df_s_edit[df_s_edit["id"] == id_socio_sel].iloc[0]
 
@@ -411,7 +385,12 @@ elif opcion == "👥 Socios":
                 fecha_orig = pd.to_datetime(datos_socio["fecha_registro"]).date()
                 e_fecha = st.date_input("Fecha de Registro", value=fecha_orig)
                 e_estado = st.selectbox("Estado", ["Activo", "Inactivo"], index=0 if datos_socio["estado"] == "Activo" else 1)
-                btn_guardar_edit = st.form_submit_button("Guardar Cambios")
+                
+                col_b1, col_b2 = st.columns(2)
+                with col_b1:
+                    btn_guardar_edit = st.form_submit_button("💾 Guardar Cambios")
+                with col_b2:
+                    btn_eliminar_socio = st.form_submit_button("🗑️ Eliminar Socio")
 
                 if btn_guardar_edit:
                     with engine.begin() as conn:
@@ -422,6 +401,54 @@ elif opcion == "👥 Socios":
                     registrar_bitacora(f"Actualización de datos del socio ID {id_socio_sel}: {e_nombre}")
                     st.success("¡Datos del socio actualizados exitosamente!")
                     st.rerun()
+
+                if btn_eliminar_socio:
+                    with engine.begin() as conn:
+                        # 1. Eliminar pagos de préstamos asociados al socio
+                        conn.execute(text("""
+                            DELETE FROM pagos 
+                            WHERE prestamo_id IN (SELECT id FROM prestamos WHERE socio_id = :id)
+                        """), {"id": id_socio_sel})
+                        # 2. Eliminar préstamos del socio
+                        conn.execute(text("DELETE FROM prestamos WHERE socio_id = :id"), {"id": id_socio_sel})
+                        # 3. Eliminar ahorros del socio
+                        conn.execute(text("DELETE FROM ahorros WHERE socio_id = :id"), {"id": id_socio_sel})
+                        # 4. Eliminar el socio finalmente
+                        conn.execute(text("DELETE FROM socios WHERE id = :id"), {"id": id_socio_sel})
+
+                    registrar_bitacora(f"Eliminación de socio duplicado ID {id_socio_sel}: {datos_socio['nombre']}")
+                    st.warning(f"Socio ID #{id_socio_sel} y sus registros vinculados han sido eliminados.")
+                    st.rerun()
+
+
+    st.markdown("---")
+    col_izq, col_der = st.columns(2)
+    with col_izq:
+        st.subheader("📌 Últimos Ahorros Registrados")
+        query_ult_ahorros = """
+            SELECT a.fecha as "Fecha", s.nombre as "Socio", a.monto as "Monto (C$)"
+            FROM ahorros a
+            JOIN socios s ON a.socio_id = s.id
+            ORDER BY a.id DESC
+            LIMIT 5
+        """
+        with engine.connect() as conn:
+            df_rec_ahorros = pd.read_sql(text(query_ult_ahorros), conn)
+        st.dataframe(df_rec_ahorros, use_container_width=True)
+
+    with col_der:
+        st.subheader("⚠️ Préstamos Activos")
+        query_prestamos_act = """
+            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.monto_total as "Total Con Interés (C$)"
+            FROM prestamos p
+            JOIN socios s ON p.socio_id = s.id
+            WHERE p.estado = 'Activo'
+        """
+        with engine.connect() as conn:
+            df_rec_prestamos = pd.read_sql(text(query_prestamos_act), conn)
+        st.dataframe(df_rec_prestamos, use_container_width=True)
+
+
 
 # ==========================================
 # SECCIÓN 3: AHORROS Y CUOTAS
