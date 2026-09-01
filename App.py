@@ -115,7 +115,7 @@ def init_db():
         );
         """))
 
-        # MIGRACIÓN AUTOMÁTICA: Asegurar que existan las nuevas columnas si la tabla ya existía antes
+        # MIGRACIÓN AUTOMÁTICA: Asegurar columnas requeridas
         conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital NUMERIC(12, 2) DEFAULT 0.00;"))
         conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes NUMERIC(12, 2) DEFAULT 0.00;"))
         conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tipo VARCHAR(20);"))
@@ -819,55 +819,55 @@ elif opcion == "📖 Pagos de Préstamos":
 
                 btn_pago = st.form_submit_button("Registrar Pago")
 
-            if btn_pago:
-                # Lógica de cálculo automático de Capital e Interés
-                if tipo_pago == "Completo (Cuota Mensual)":
-                    if monto_pago >= interes_mensual_est:
-                        m_interes = interes_mensual_est
-                        m_capital = monto_pago - m_interes
-                    else:
+                if btn_pago:
+                    # Lógica de cálculo automático de Capital e Interés
+                    if tipo_pago == "Completo (Cuota Mensual)":
+                        if monto_pago >= interes_mensual_est:
+                            m_interes = interes_mensual_est
+                            m_capital = monto_pago - m_interes
+                        else:
+                            m_interes = monto_pago
+                            m_capital = 0.0
+                        tipo_db = "Completo"
+                    elif tipo_pago == "Solo Interés":
                         m_interes = monto_pago
                         m_capital = 0.0
-                    tipo_db = "Completo"
-                elif tipo_pago == "Solo Interés":
-                    m_interes = monto_pago
-                    m_capital = 0.0
-                    tipo_db = "Interés"
-                else:  # Abono a Capital
-                    m_capital = monto_pago
-                    m_interes = 0.0
-                    tipo_db = "Capital"
+                        tipo_db = "Interés"
+                    else:  # Abono a Capital
+                        m_capital = monto_pago
+                        m_interes = 0.0
+                        tipo_db = "Capital"
 
-                with engine.begin() as conn:
-                    conn.execute(
-                        text("""
-                        INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
-                        VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo)
-                        """),
-                        {
-                            "p_id": p_id,
-                            "monto": monto_pago,
-                            "capital": m_capital,
-                            "interes": m_interes,
-                            "fecha": str(fecha_pago),
-                            "tipo": tipo_db
-                        }
-                    )
+                    with engine.begin() as conn:
+                        conn.execute(
+                            text("""
+                            INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
+                            VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo)
+                            """),
+                            {
+                                "p_id": p_id,
+                                "monto": monto_pago,
+                                "capital": m_capital,
+                                "interes": m_interes,
+                                "fecha": str(fecha_pago),
+                                "tipo": tipo_db
+                            }
+                        )
 
-                    df_total_p = pd.read_sql(
-                        text("SELECT COALESCE(SUM(monto_pagado), 0) as suma FROM pagos WHERE prestamo_id = :p_id"),
-                        conn, params={"p_id": p_id}
-                    )
-                    pagado_hasta_hoy = float(df_total_p["suma"].iloc[0])
+                        df_total_p = pd.read_sql(
+                            text("SELECT COALESCE(SUM(monto_pagado), 0) as suma FROM pagos WHERE prestamo_id = :p_id"),
+                            conn, params={"p_id": p_id}
+                        )
+                        pagado_hasta_hoy = float(df_total_p["suma"].iloc[0])
 
-                    if pagado_hasta_hoy >= float(datos_p["monto_total"]):
-                        conn.execute(text("UPDATE prestamos SET estado = 'Saldado' WHERE id = :p_id"), {"p_id": p_id})
-                        registrar_bitacora(f"Préstamo ID {p_id} completado y saldado.")
-                        st.balloons()
-                        st.success("¡El préstamo ha sido saldado completamente!")
-                    else:
-                        registrar_bitacora(f"Abono de C$ {monto_pago} (Cap: C$ {m_capital}, Int: C$ {m_interes}) para préstamo ID {p_id}")
-                        st.success(f"Abono registrado: C$ {m_capital:,.2f} a Capital y C$ {m_interes:,.2f} a Interés.")
+                        if pagado_hasta_hoy >= float(datos_p["monto_total"]):
+                            conn.execute(text("UPDATE prestamos SET estado = 'Saldado' WHERE id = :p_id"), {"p_id": p_id})
+                            registrar_bitacora(f"Préstamo ID {p_id} completado y saldado.")
+                            st.balloons()
+                            st.success("¡El préstamo ha sido saldado completamente!")
+                        else:
+                            registrar_bitacora(f"Abono de C$ {monto_pago} (Cap: C$ {m_capital}, Int: C$ {m_interes}) para préstamo ID {p_id}")
+                            st.success(f"Abono registrado: C$ {m_capital:,.2f} a Capital y C$ {m_interes:,.2f} a Interés.")
                     st.rerun()
 
     with tab2:
