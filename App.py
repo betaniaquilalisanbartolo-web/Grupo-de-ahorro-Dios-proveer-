@@ -102,7 +102,7 @@ def init_db():
         );
         """))
 
-        # Pagos de Préstamos (Con columnas para desglose de Capital e Interés)
+        # Pagos de Préstamos
         conn.execute(text("""
         CREATE TABLE IF NOT EXISTS pagos (
             id SERIAL PRIMARY KEY,
@@ -111,9 +111,14 @@ def init_db():
             monto_capital NUMERIC(12, 2) DEFAULT 0.00,
             monto_interes NUMERIC(12, 2) DEFAULT 0.00,
             fecha DATE NOT NULL,
-            tipo VARCHAR(20) CHECK(tipo IN ('Capital', 'Interés', 'Completo'))
+            tipo VARCHAR(20)
         );
         """))
+
+        # MIGRACIÓN AUTOMÁTICA: Asegurar que existan las nuevas columnas si la tabla ya existía antes
+        conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital NUMERIC(12, 2) DEFAULT 0.00;"))
+        conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes NUMERIC(12, 2) DEFAULT 0.00;"))
+        conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tipo VARCHAR(20);"))
 
         # Egresos y Gastos Operativos
         conn.execute(text("""
@@ -870,8 +875,8 @@ elif opcion == "📖 Pagos de Préstamos":
         query_pagos = """
         SELECT pg.id as "ID", s.nombre as "Socio", pg.prestamo_id as "ID Préstamo",
                pg.monto_pagado as "Monto Total Pagado (C$)",
-               pg.monto_capital as "Abono Capital (C$)",
-               pg.monto_interes as "Abono Interés (C$)",
+               COALESCE(pg.monto_capital, 0.00) as "Abono Capital (C$)",
+               COALESCE(pg.monto_interes, 0.00) as "Abono Interés (C$)",
                pg.tipo as "Tipo", pg.fecha as "Fecha"
         FROM pagos pg
         JOIN prestamos p ON pg.prestamo_id = p.id
@@ -894,7 +899,8 @@ elif opcion == "📖 Pagos de Préstamos":
         st.subheader("Editar o Eliminar un Pago")
         query_edit_pg = """
         SELECT pg.id, s.nombre || ' - Pago #' || pg.id || ' (C$' || pg.monto_pagado || ')' as label,
-               pg.monto_pagado, pg.monto_capital, pg.monto_interes, pg.tipo, pg.fecha, pg.prestamo_id
+               pg.monto_pagado, COALESCE(pg.monto_capital, 0.00) as monto_capital, COALESCE(pg.monto_interes, 0.00) as monto_interes,
+               pg.tipo, pg.fecha, pg.prestamo_id
         FROM pagos pg
         JOIN prestamos p ON pg.prestamo_id = p.id
         JOIN socios s ON p.socio_id = s.id
@@ -915,7 +921,10 @@ elif opcion == "📖 Pagos de Préstamos":
                 e_monto_pg = st.number_input("Monto Total Pagado (C$)", value=float(reg_pg["monto_pagado"]), min_value=1.0, step=10.0)
                 e_cap_pg = st.number_input("Monto Aportado a Capital (C$)", value=float(reg_pg["monto_capital"] or 0.0), min_value=0.0, step=10.0)
                 e_int_pg = st.number_input("Monto Aportado a Interés (C$)", value=float(reg_pg["monto_interes"] or 0.0), min_value=0.0, step=10.0)
-                e_tipo_pg = st.selectbox("Tipo", ["Capital", "Interés", "Completo"], index=["Capital", "Interés", "Completo"].index(reg_pg["tipo"]) if reg_pg["tipo"] in ["Capital", "Interés", "Completo"] else 0)
+                
+                tipo_actual = reg_pg["tipo"] if reg_pg["tipo"] in ["Capital", "Interés", "Completo"] else "Completo"
+                e_tipo_pg = st.selectbox("Tipo", ["Capital", "Interés", "Completo"], index=["Capital", "Interés", "Completo"].index(tipo_actual))
+                
                 f_pg_orig = pd.to_datetime(reg_pg["fecha"]).date()
                 e_fecha_pg = st.date_input("Fecha de Pago", value=f_pg_orig)
 
@@ -1064,7 +1073,7 @@ elif opcion == "🎉 Liquidación Anual":
         gran_total_ahorrado = float(df_tot_ahorro["total"].iloc[0])
 
         # Suma real de intereses cobrados desde la columna desglosada 'monto_interes'
-        df_tot_intereses = pd.read_sql(text("SELECT COALESCE(SUM(monto_interes), 0) as total FROM pagos"), conn)
+        df_tot_intereses = pd.read_sql(text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos"), conn)
         total_intereses_ganados = float(df_tot_intereses["total"].iloc[0])
 
         df_tot_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos"), conn)
@@ -1156,7 +1165,7 @@ elif opcion == "📅 Cierre Mensual y Anual":
                 df_tot_a = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn)
                 tot_a = float(df_tot_a["total"].iloc[0])
 
-                df_tot_i = pd.read_sql(text("SELECT COALESCE(SUM(monto_interes), 0) as total FROM pagos"), conn)
+                df_tot_i = pd.read_sql(text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos"), conn)
                 tot_i = float(df_tot_i["total"].iloc[0])
 
             with engine.begin() as conn:
