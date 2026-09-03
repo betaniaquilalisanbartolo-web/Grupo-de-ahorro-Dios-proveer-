@@ -616,11 +616,11 @@ elif opcion == "🤝 Préstamos":
                 )
 
         # ==========================================
-        # REPORTE EXCLUSIVO MENSUAL DE PRÉSTAMOS
+        # REPORTE EXCLUSIVO MENSUAL DE PRÉSTAMOS (CORREGIDO Y REFINADO)
         # ==========================================
         with tab3:
             st.subheader("📅 Reporte Mensual Exclusivo de Préstamos")
-            st.caption("Filtra y visualiza únicamente a los socios con préstamos emitidos o vigentes en el mes seleccionado.")
+            st.caption("Filtra la cartera activa/emitida en el mes e indica la comparación entre el Interés Mensual esperado (%) vs. el Interés cobrado (Cumplido).")
 
             col_m1, col_m2 = st.columns(2)
             with col_m1:
@@ -628,6 +628,7 @@ elif opcion == "🤝 Préstamos":
             with col_m2:
                 anio_rep = st.number_input("Seleccionar Año:", min_value=2020, max_value=2100, value=datetime.now().year, key="rep_anio_p")
 
+            # Muestra préstamos activos o emitidos dentro de la ventana de vigencia del mes
             query_reporte_mensual = """
             SELECT 
                 p.id AS "ID Préstamo",
@@ -635,18 +636,19 @@ elif opcion == "🤝 Préstamos":
                 p.monto_prestado AS "Capital (C$)",
                 p.tasa_interes AS "Tasa (%)",
                 p.plazo_meses AS "Plazo (Meses)",
-                p.interes_total AS "Interés (C$)",
-                p.monto_total AS "Total A Pagar (C$)",
-                COALESCE(SUM(pg.monto_pagado), 0.00) AS "Total Cobrado (C$)",
-                (p.monto_total - COALESCE(SUM(pg.monto_pagado), 0.00)) AS "Saldo Pendiente (C$)",
+                (p.monto_prestado * (p.tasa_interes / 100.0)) AS "Interés Mensual Esperado (C$)",
+                COALESCE(SUM(pg.monto_interes), 0.00) AS "Interés Cobrado en Mes (C$)",
+                COALESCE(SUM(pg.monto_pagado), 0.00) AS "Total Cobrado en Mes (C$)",
                 p.fecha_inicio AS "Fecha Emisión",
                 p.estado AS "Estado"
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
-            LEFT JOIN pagos pg ON p.id = pg.prestamo_id
+            LEFT JOIN pagos pg ON p.id = pg.prestamo_id 
+                AND EXTRACT(MONTH FROM pg.fecha) = :mes 
+                AND EXTRACT(YEAR FROM pg.fecha) = :anio
             WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :mes 
               AND EXTRACT(YEAR FROM p.fecha_inicio) = :anio
-            GROUP BY p.id, s.nombre, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.interes_total, p.monto_total, p.fecha_inicio, p.estado
+            GROUP BY p.id, s.nombre, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, p.estado
             ORDER BY p.id DESC
             """
 
@@ -654,17 +656,20 @@ elif opcion == "🤝 Préstamos":
                 df_rep_p = pd.read_sql(text(query_reporte_mensual), conn, params={"mes": mes_rep, "anio": anio_rep})
 
             if df_rep_p.empty:
-                st.info(f"No se registraron nuevos préstamos emitidos en el mes {mes_rep}/{anio_rep}.")
+                st.info(f"No se registraron préstamos vigentes o emitidos en el mes {mes_rep}/{anio_rep}.")
             else:
                 m_cap = df_rep_p["Capital (C$)"].sum()
-                m_int = df_rep_p["Interés (C$)"].sum()
-                m_rec = df_rep_p["Total Cobrado (C$)"].sum()
+                m_int_mensual_esperado = df_rep_p["Interés Mensual Esperado (C$)"].sum()
+                m_int_cobrado_mes = df_rep_p["Interés Cobrado en Mes (C$)"].sum()
+                pct_cumplimiento = (m_int_cobrado_mes / m_int_mensual_esperado * 100) if m_int_mensual_esperado > 0 else 0.0
 
-                col_r1, col_r2, col_r3 = st.columns(3)
+                col_r1, col_r2, col_r3, col_r4 = st.columns(4)
                 col_r1.metric("💵 Total Capital Prestado", f"C$ {m_cap:,.2f}")
-                col_r2.metric("📈 Total Intereses Esperados", f"C$ {m_int:,.2f}")
-                col_r3.metric("📥 Total Amortizado", f"C$ {m_rec:,.2f}")
+                col_r2.metric("📈 Interés Mensual Esperado", f"C$ {m_int_mensual_esperado:,.2f}")
+                col_r3.metric("📥 Interés Cobrado (Mes)", f"C$ {m_int_cobrado_mes:,.2f}")
+                col_r4.metric("📊 Cumplimiento de Interés", f"{pct_cumplimiento:.1f}%")
 
+                st.markdown("---")
                 st.dataframe(df_rep_p, use_container_width=True)
 
                 st.download_button(
