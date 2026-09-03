@@ -48,10 +48,10 @@ def init_db():
     with engine.begin() as conn:
         # Configuración de sistema / credenciales
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS configuracion (
-            clave VARCHAR(50) PRIMARY KEY,
-            valor VARCHAR(550) NOT NULL
-        );
+            CREATE TABLE IF NOT EXISTS configuracion (
+                clave VARCHAR(50) PRIMARY KEY,
+                valor VARCHAR(550) NOT NULL
+            );
         """))
         
         # Insertar contraseña por defecto ('admin123') cifrada si no existe
@@ -65,56 +65,56 @@ def init_db():
 
         # Socios
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS socios (
-            id SERIAL PRIMARY KEY,
-            nombre VARCHAR(255) NOT NULL,
-            telefono VARCHAR(50),
-            fecha_registro DATE NOT NULL,
-            estado VARCHAR(20) DEFAULT 'Activo'
-        );
+            CREATE TABLE IF NOT EXISTS socios (
+                id SERIAL PRIMARY KEY,
+                nombre VARCHAR(255) NOT NULL,
+                telefono VARCHAR(50),
+                fecha_registro DATE NOT NULL,
+                estado VARCHAR(20) DEFAULT 'Activo'
+            );
         """))
 
         # Ahorros
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS ahorros (
-            id SERIAL PRIMARY KEY,
-            socio_id INTEGER NOT NULL REFERENCES socios(id),
-            monto NUMERIC(12, 2) NOT NULL,
-            fecha DATE NOT NULL,
-            nota TEXT,
-            anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-        );
+            CREATE TABLE IF NOT EXISTS ahorros (
+                id SERIAL PRIMARY KEY,
+                socio_id INTEGER NOT NULL REFERENCES socios(id),
+                monto NUMERIC(12, 2) NOT NULL,
+                fecha DATE NOT NULL,
+                nota TEXT,
+                anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+            );
         """))
 
         # Préstamos
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS prestamos (
-            id SERIAL PRIMARY KEY,
-            socio_id INTEGER NOT NULL REFERENCES socios(id),
-            monto_prestado NUMERIC(12, 2) NOT NULL,
-            tasa_interes NUMERIC(5, 2) NOT NULL,
-            plazo_meses INTEGER NOT NULL,
-            interes_total NUMERIC(12, 2) NOT NULL,
-            monto_total NUMERIC(12, 2) NOT NULL,
-            fecha_inicio DATE NOT NULL,
-            estado VARCHAR(20) DEFAULT 'Activo',
-            anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-        );
+            CREATE TABLE IF NOT EXISTS prestamos (
+                id SERIAL PRIMARY KEY,
+                socio_id INTEGER NOT NULL REFERENCES socios(id),
+                monto_prestado NUMERIC(12, 2) NOT NULL,
+                tasa_interes NUMERIC(5, 2) NOT NULL,
+                plazo_meses INTEGER NOT NULL,
+                interes_total NUMERIC(12, 2) NOT NULL,
+                monto_total NUMERIC(12, 2) NOT NULL,
+                fecha_inicio DATE NOT NULL,
+                estado VARCHAR(20) DEFAULT 'Activo',
+                anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+            );
         """))
 
         # Pagos de Préstamos
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS pagos (
-            id SERIAL PRIMARY KEY,
-            prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
-            monto_pagado NUMERIC(12, 2) NOT NULL,
-            monto_capital NUMERIC(12, 2) DEFAULT 0.00,
-            monto_interes NUMERIC(12, 2) DEFAULT 0.00,
-            fecha DATE NOT NULL,
-            tipo VARCHAR(20)
-        );
+            CREATE TABLE IF NOT EXISTS pagos (
+                id SERIAL PRIMARY KEY,
+                prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
+                monto_pagado NUMERIC(12, 2) NOT NULL,
+                monto_capital NUMERIC(12, 2) DEFAULT 0.00,
+                monto_interes NUMERIC(12, 2) DEFAULT 0.00,
+                fecha DATE NOT NULL,
+                tipo VARCHAR(20)
+            );
         """))
-
+        
         # MIGRACIÓN AUTOMÁTICA
         conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital NUMERIC(12, 2) DEFAULT 0.00;"))
         conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes NUMERIC(12, 2) DEFAULT 0.00;"))
@@ -122,34 +122,34 @@ def init_db():
 
         # Egresos y Gastos Operativos
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS egresos (
-            id SERIAL PRIMARY KEY,
-            concepto VARCHAR(255) NOT NULL,
-            monto NUMERIC(12, 2) NOT NULL,
-            fecha DATE NOT NULL,
-            responsable VARCHAR(100)
-        );
+            CREATE TABLE IF NOT EXISTS egresos (
+                id SERIAL PRIMARY KEY,
+                concepto VARCHAR(255) NOT NULL,
+                monto NUMERIC(12, 2) NOT NULL,
+                fecha DATE NOT NULL,
+                responsable VARCHAR(100)
+            );
         """))
 
         # Cierres Anuales
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS cierres_anuales (
-            id SERIAL PRIMARY KEY,
-            anio INTEGER NOT NULL,
-            total_ahorrado NUMERIC(12, 2) NOT NULL,
-            total_intereses NUMERIC(12, 2) NOT NULL,
-            fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
+            CREATE TABLE IF NOT EXISTS cierres_anuales (
+                id SERIAL PRIMARY KEY,
+                anio INTEGER NOT NULL,
+                total_ahorrado NUMERIC(12, 2) NOT NULL,
+                total_intereses NUMERIC(12, 2) NOT NULL,
+                fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """))
 
         # Bitácora de Auditoría
         conn.execute(text("""
-        CREATE TABLE IF NOT EXISTS bitacora (
-            id SERIAL PRIMARY KEY,
-            fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            usuario VARCHAR(100) DEFAULT 'Administrador',
-            accion TEXT NOT NULL
-        );
+            CREATE TABLE IF NOT EXISTS bitacora (
+                id SERIAL PRIMARY KEY,
+                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                usuario VARCHAR(100) DEFAULT 'Administrador',
+                accion TEXT NOT NULL
+            );
         """))
 
 if "db_inicializada" not in st.session_state:
@@ -243,7 +243,7 @@ else:
                     st.error("La nueva contraseña debe tener al menos 4 caracteres.")
             else:
                 st.error("La contraseña actual es incorrecta.")
-
+    
     if st.sidebar.button("Cerrar sesión"):
         st.session_state.autenticado = False
         st.rerun()
@@ -297,8 +297,7 @@ if opcion == "📊 Panel General":
         SELECT p.id, s.nombre, p.monto_prestado, p.fecha_inicio, p.plazo_meses 
         FROM prestamos p 
         JOIN socios s ON p.socio_id = s.id 
-        WHERE p.estado = 'Activo' 
-          AND (p.fecha_inicio::DATE + (p.plazo_meses || ' month')::INTERVAL) < CURRENT_DATE
+        WHERE p.estado = 'Activo' AND (p.fecha_inicio::DATE + (p.plazo_meses || ' month')::INTERVAL) < CURRENT_DATE
         """
         df_mora = pd.read_sql(text(query_mora), conn)
 
@@ -343,14 +342,14 @@ elif opcion == "👥 Socios":
                 text('SELECT id as "ID", nombre as "Nombre", telefono as "Teléfono", fecha_registro as "Fecha Registro", estado as "Estado" FROM socios ORDER BY id ASC'),
                 conn
             )
-        st.dataframe(df_socios, use_container_width=True)
-        if not df_socios.empty:
-            st.download_button(
-                label="📥 Exportar Socios a Excel",
-                data=to_excel(df_socios),
-                file_name=f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
+            st.dataframe(df_socios, use_container_width=True)
+            if not df_socios.empty:
+                st.download_button(
+                    label="📥 Exportar Socios a Excel",
+                    data=to_excel(df_socios),
+                    file_name=f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
 
     with tab2:
         st.subheader("Formulario de Registro")
@@ -384,6 +383,7 @@ elif opcion == "👥 Socios":
             dict_s_edit = dict(zip([f"ID #{row['id']} - {row['nombre']}" for _, row in df_s_edit.iterrows()], df_s_edit["id"]))
             socio_sel = st.selectbox("Selecciona el Socio:", list(dict_s_edit.keys()))
             id_socio_sel = dict_s_edit[socio_sel]
+
             datos_socio = df_s_edit[df_s_edit["id"] == id_socio_sel].iloc[0]
 
             with st.form("form_edit_socio"):
@@ -424,6 +424,7 @@ elif opcion == "👥 Socios":
 # ==========================================
 elif opcion == "💵 Ahorros y Cuotas":
     st.title("💵 Registro de Ahorros")
+
     with engine.connect() as conn:
         df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
@@ -464,8 +465,8 @@ elif opcion == "💵 Ahorros y Cuotas":
             """
             with engine.connect() as conn:
                 df_hist_ahorros = pd.read_sql(text(query_ahorros), conn)
-            st.dataframe(df_hist_ahorros, use_container_width=True)
 
+            st.dataframe(df_hist_ahorros, use_container_width=True)
             if not df_hist_ahorros.empty:
                 st.download_button(
                     label="📥 Exportar Ahorros a Excel",
@@ -536,6 +537,7 @@ elif opcion == "💵 Ahorros y Cuotas":
 # ==========================================
 elif opcion == "🤝 Préstamos":
     st.title("🤝 Gestión de Préstamos")
+
     with engine.connect() as conn:
         df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
@@ -595,7 +597,7 @@ elif opcion == "🤝 Préstamos":
         with tab2:
             st.subheader("Historial General de Préstamos")
             query_p = """
-            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto Prestado (C$)",
+            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto Prestado (C$)", 
                    p.tasa_interes as "Tasa (%)", p.plazo_meses as "Plazo (Meses)", 
                    p.interes_total as "Interés Total (C$)", p.monto_total as "Total a Pagar (C$)", 
                    p.fecha_inicio as "Fecha", p.estado as "Estado"
@@ -605,8 +607,8 @@ elif opcion == "🤝 Préstamos":
             """
             with engine.connect() as conn:
                 df_prestamos_hist = pd.read_sql(text(query_p), conn)
-            st.dataframe(df_prestamos_hist, use_container_width=True)
 
+            st.dataframe(df_prestamos_hist, use_container_width=True)
             if not df_prestamos_hist.empty:
                 st.download_button(
                     label="📥 Exportar Préstamos a Excel",
@@ -615,9 +617,6 @@ elif opcion == "🤝 Préstamos":
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
-        # ==========================================
-        # REPORTE EXCLUSIVO MENSUAL DE PRÉSTAMOS (CORREGIDO Y REFINADO)
-        # ==========================================
         with tab3:
             st.subheader("📅 Reporte Mensual Exclusivo de Préstamos")
             st.caption("Filtra la cartera activa/emitida en el mes e indica la comparación entre el Interés Mensual esperado (%) vs. el Interés cobrado (Cumplido).")
@@ -628,30 +627,24 @@ elif opcion == "🤝 Préstamos":
             with col_m2:
                 anio_rep = st.number_input("Seleccionar Año:", min_value=2020, max_value=2100, value=datetime.now().year, key="rep_anio_p")
 
-            # Muestra préstamos activos o emitidos dentro de la ventana de vigencia del mes
             query_reporte_mensual = """
-            SELECT 
-                p.id AS "ID Préstamo",
-                s.nombre AS "Socio",
-                p.monto_prestado AS "Capital (C$)",
-                p.tasa_interes AS "Tasa (%)",
-                p.plazo_meses AS "Plazo (Meses)",
-                (p.monto_prestado * (p.tasa_interes / 100.0)) AS "Interés Mensual Esperado (C$)",
-                COALESCE(SUM(pg.monto_interes), 0.00) AS "Interés Cobrado en Mes (C$)",
-                COALESCE(SUM(pg.monto_pagado), 0.00) AS "Total Cobrado en Mes (C$)",
-                p.fecha_inicio AS "Fecha Emisión",
-                p.estado AS "Estado"
+            SELECT p.id AS "ID Préstamo", 
+                   s.nombre AS "Socio", 
+                   p.monto_prestado AS "Capital (C$)", 
+                   p.tasa_interes AS "Tasa (%)", 
+                   p.plazo_meses AS "Plazo (Meses)", 
+                   (p.monto_prestado * (p.tasa_interes / 100.0)) AS "Interés Mensual Esperado (C$)",
+                   COALESCE(SUM(pg.monto_interes), 0.00) AS "Interés Cobrado en Mes (C$)",
+                   COALESCE(SUM(pg.monto_pagado), 0.00) AS "Total Cobrado en Mes (C$)",
+                   p.fecha_inicio AS "Fecha Emisión",
+                   p.estado AS "Estado"
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
-            LEFT JOIN pagos pg ON p.id = pg.prestamo_id 
-                AND EXTRACT(MONTH FROM pg.fecha) = :mes 
-                AND EXTRACT(YEAR FROM pg.fecha) = :anio
-            WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :mes 
-              AND EXTRACT(YEAR FROM p.fecha_inicio) = :anio
+            LEFT JOIN pagos pg ON p.id = pg.prestamo_id AND EXTRACT(MONTH FROM pg.fecha) = :mes AND EXTRACT(YEAR FROM pg.fecha) = :anio
+            WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :mes AND EXTRACT(YEAR FROM p.fecha_inicio) = :anio
             GROUP BY p.id, s.nombre, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, p.estado
             ORDER BY p.id DESC
             """
-
             with engine.connect() as conn:
                 df_rep_p = pd.read_sql(text(query_reporte_mensual), conn, params={"mes": mes_rep, "anio": anio_rep})
 
@@ -671,7 +664,6 @@ elif opcion == "🤝 Préstamos":
 
                 st.markdown("---")
                 st.dataframe(df_rep_p, use_container_width=True)
-
                 st.download_button(
                     label=f"📥 Descargar Reporte de Préstamos ({mes_rep}-{anio_rep})",
                     data=to_excel(df_rep_p),
@@ -682,7 +674,7 @@ elif opcion == "🤝 Préstamos":
         with tab4:
             st.subheader("Modificar o Eliminar Préstamo")
             query_edit_p = """
-            SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_prestado || ')' as label,
+            SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_prestado || ')' as label, 
                    p.socio_id, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, p.estado
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
@@ -798,7 +790,6 @@ elif opcion == "🧮 Simulador de Préstamos":
         cronograma = []
         saldo = sim_monto
         tot_int = 0
-
         for i in range(1, sim_plazo + 1):
             interes_p = saldo * r
             capital_p = cuota - interes_p
@@ -841,6 +832,7 @@ elif opcion == "📖 Pagos de Préstamos":
             st.info("No hay préstamos activos pendientes de pago.")
         else:
             dict_prestamos = dict(zip(df_prestamos_act["label"], df_prestamos_act["id"]))
+
             with st.form("form_pago", clear_on_submit=True):
                 prestamo_sel = st.selectbox("Selecciona el Préstamo *", list(dict_prestamos.keys()))
                 p_id = dict_prestamos[prestamo_sel]
@@ -861,6 +853,7 @@ elif opcion == "📖 Pagos de Préstamos":
 
                 monto_pago = st.number_input("Monto del Pago/Abono (C$) *", min_value=1.0, value=monto_sugerido, step=10.0)
                 fecha_pago = st.date_input("Fecha del Pago", datetime.now())
+
                 btn_pago = st.form_submit_button("Registrar Pago")
 
                 if btn_pago:
@@ -928,8 +921,8 @@ elif opcion == "📖 Pagos de Préstamos":
         """
         with engine.connect() as conn:
             df_pagos_hist = pd.read_sql(text(query_pagos), conn)
-        st.dataframe(df_pagos_hist, use_container_width=True)
 
+        st.dataframe(df_pagos_hist, use_container_width=True)
         if not df_pagos_hist.empty:
             st.download_button(
                 label="📥 Exportar Pagos a Excel",
@@ -941,7 +934,7 @@ elif opcion == "📖 Pagos de Préstamos":
     with tab3:
         st.subheader("Editar o Eliminar un Pago")
         query_edit_pg = """
-        SELECT pg.id, s.nombre || ' - Pago #' || pg.id || ' (C$' || pg.monto_pagado || ')' as label,
+        SELECT pg.id, s.nombre || ' - Pago #' || pg.id || ' (C$' || pg.monto_pagado || ')' as label, 
                pg.monto_pagado, COALESCE(pg.monto_capital, 0.00) as monto_capital, 
                COALESCE(pg.monto_interes, 0.00) as monto_interes, pg.tipo, pg.fecha, pg.prestamo_id
         FROM pagos pg
@@ -964,8 +957,10 @@ elif opcion == "📖 Pagos de Préstamos":
                 e_monto_pg = st.number_input("Monto Total Pagado (C$)", value=float(reg_pg["monto_pagado"]), min_value=1.0, step=10.0)
                 e_cap_pg = st.number_input("Monto Aportado a Capital (C$)", value=float(reg_pg["monto_capital"] or 0.0), min_value=0.0, step=10.0)
                 e_int_pg = st.number_input("Monto Aportado a Interés (C$)", value=float(reg_pg["monto_interes"] or 0.0), min_value=0.0, step=10.0)
+
                 tipo_actual = reg_pg["tipo"] if reg_pg["tipo"] in ["Capital", "Interés", "Completo"] else "Completo"
                 e_tipo_pg = st.selectbox("Tipo", ["Capital", "Interés", "Completo"], index=["Capital", "Interés", "Completo"].index(tipo_actual))
+
                 f_pg_orig = pd.to_datetime(reg_pg["fecha"]).date()
                 e_fecha_pg = st.date_input("Fecha de Pago", value=f_pg_orig)
 
@@ -998,6 +993,7 @@ elif opcion == "📖 Pagos de Préstamos":
 elif opcion == "💸 Egresos y Gastos":
     st.title("💸 Control de Egresos y Gastos Operativos")
     st.caption("Registro de gastos administrativos o imprevistos de la caja.")
+
     tab1, tab2 = st.tabs(["➕ Registrar Egreso", "📜 Historial de Egresos"])
 
     with tab1:
@@ -1025,8 +1021,8 @@ elif opcion == "💸 Egresos y Gastos":
         query_e = 'SELECT id as "ID", concepto as "Concepto", monto as "Monto (C$)", fecha as "Fecha", responsable as "Responsable" FROM egresos ORDER BY id DESC'
         with engine.connect() as conn:
             df_egresos_h = pd.read_sql(text(query_e), conn)
-        st.dataframe(df_egresos_h, use_container_width=True)
 
+        st.dataframe(df_egresos_h, use_container_width=True)
         if not df_egresos_h.empty:
             st.download_button(
                 label="📥 Exportar Egresos a Excel",
@@ -1103,20 +1099,22 @@ elif opcion == "📜 Estado de Cuenta":
             )
 
 # ==========================================
-# SECCIÓN 9: LIQUIDACIÓN ANUAL DE SOCIOS
+# SECCIÓN 9: LIQUIDACIÓN ANUAL DE SOCIOS (PONDERADA MES A MES)
 # ==========================================
 elif opcion == "🎉 Liquidación Anual":
     st.title("🎉 Cálculo de Liquidación Automática de Fin de Año")
-    st.caption("Reparto transparente de capital e intereses generados para cada socio.")
+    st.caption("Reparto transparente del capital acumulado e intereses repartidos según el tiempo real de permanencia de los ahorros mes a mes.")
+
+    anio_liq = st.number_input("Seleccionar Año de Liquidación:", min_value=2020, max_value=2100, value=datetime.now().year, key="anio_liq_input")
 
     with engine.connect() as conn:
-        df_tot_ahorro = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn)
+        df_tot_ahorro = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})
         gran_total_ahorrado = float(df_tot_ahorro["total"].iloc[0])
 
-        df_tot_intereses = pd.read_sql(text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos"), conn)
+        df_tot_intereses = pd.read_sql(text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})
         total_intereses_ganados = float(df_tot_intereses["total"].iloc[0])
 
-        df_tot_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos"), conn)
+        df_tot_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})
         total_gastos = float(df_tot_egresos["total"].iloc[0])
 
     utilidad_neta = total_intereses_ganados - total_gastos
@@ -1130,39 +1128,93 @@ elif opcion == "🎉 Liquidación Anual":
     st.markdown("---")
 
     if gran_total_ahorrado == 0:
-        st.warning("No hay aportaciones de ahorros registrados aún para calcular la liquidación.")
+        st.warning("No hay aportaciones de ahorros registrados en este año para calcular la liquidación.")
     else:
-        st.subheader("📋 Tabla Oficial de Reparto por Socio")
-        query_liq = """
-        SELECT s.id as "ID", s.nombre as "Socio", COALESCE(SUM(a.monto), 0) as "Ahorro_Total"
+        # Consulta de aportaciones de ahorro por socio y por mes
+        query_ahorros_mes = """
+        SELECT s.id as socio_id, s.nombre as socio, 
+               EXTRACT(MONTH FROM a.fecha) as mes, 
+               SUM(a.monto) as monto_mes
         FROM socios s
-        LEFT JOIN ahorros a ON s.id = a.socio_id
-        WHERE s.estado = 'Activo'
-        GROUP BY s.id, s.nombre
+        JOIN ahorros a ON s.id = a.socio_id
+        WHERE s.estado = 'Activo' AND EXTRACT(YEAR FROM a.fecha) = :a
+        GROUP BY s.id, s.nombre, EXTRACT(MONTH FROM a.fecha)
         """
         with engine.connect() as conn:
-            df_liq = pd.read_sql(text(query_liq), conn)
+            df_a_mes = pd.read_sql(text(query_ahorros_mes), conn, params={"a": anio_liq})
+            df_socios_act = pd.read_sql(text("SELECT id as socio_id, nombre as socio FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
-        df_liq["Participación (%)"] = (df_liq["Ahorro_Total"] / gran_total_ahorrado) * 100
-        df_liq["Ganancia Neta (C$)"] = (df_liq["Participación (%)"] / 100) * utilidad_neta
-        df_liq["Total a Entregar (C$)"] = df_liq["Ahorro_Total"] + df_liq["Ganancia Neta (C$)"]
+        # Construcción de la matriz mensual
+        meses_nombres = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun", 
+                         7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
 
-        df_display = df_liq.copy()
-        df_display["Ahorro_Total"] = df_display["Ahorro_Total"].map("C$ {:,.2f}".format)
-        df_display["Participación (%)"] = df_display["Participación (%)"].map("{:,.2f}%".format)
-        df_display["Ganancia Neta (C$)"] = df_display["Ganancia Neta (C$)"].map("C$ {:,.2f}".format)
-        df_display["Total a Entregar (C$)"] = df_display["Total a Entregar (C$)"].map("C$ {:,.2f}".format)
-        df_display = df_display.rename(columns={"Ahorro_Total": "Capital Ahorrado (C$)"})
+        # Pivot para mostrar meses en columnas
+        if not df_a_mes.empty:
+            df_pivot = df_a_mes.pivot(index="socio_id", columns="mes", values="monto_mes").fillna(0)
+        else:
+            df_pivot = pd.DataFrame()
 
-        st.dataframe(df_display, use_container_width=True)
+        # Asegurar todas las columnas de meses (1 al 12)
+        for m in range(1, 13):
+            if m not in df_pivot.columns:
+                df_pivot[m] = 0.0
+
+        df_liq_base = df_socios_act.merge(df_pivot, on="socio_id", how="left").fillna(0)
+
+        # Cálculo de Ahorro Ponderado (Monto × Meses de trabajo en el año)
+        # Enero (mes 1) trabaja 12 meses; Diciembre (mes 12) trabaja 1 mes.
+        df_liq_base["Ahorro_Ponderado"] = 0.0
+        df_liq_base["Ahorro_Total"] = 0.0
+
+        for m in range(1, 13):
+            meses_permanencia = 12 - m + 1
+            df_liq_base["Ahorro_Ponderado"] += df_liq_base[m] * meses_permanencia
+            df_liq_base["Ahorro_Total"] += df_liq_base[m]
+
+        total_ponderado_general = df_liq_base["Ahorro_Ponderado"].sum()
+
+        if total_ponderado_general > 0:
+            df_liq_base["Participación (%)"] = (df_liq_base["Ahorro_Ponderado"] / total_ponderado_general) * 100
+        else:
+            df_liq_base["Participación (%)"] = 0.0
+
+        df_liq_base["Ganancia Neta (C$)"] = (df_liq_base["Participación (%)"] / 100) * utilidad_neta
+        df_liq_base["Total a Entregar (C$)"] = df_liq_base["Ahorro_Total"] + df_liq_base["Ganancia Neta (C$)"]
+
+        # Renombrar columnas de meses a nombres entendibles
+        cols_meses_rename = {m: meses_nombres[m] for m in range(1, 13)}
+        df_display_liq = df_liq_base.rename(columns=cols_meses_rename)
+
+        st.subheader("🗓️ Detalle de Ahorros Mensuales y Ponderación")
+        
+        # Formateo de tabla para presentación en UI
+        df_ui = df_display_liq.copy()
+        for m_nom in meses_nombres.values():
+            df_ui[m_nom] = df_ui[m_nom].map("C$ {:,.2f}".format)
+
+        df_ui["Ahorro_Total"] = df_ui["Ahorro_Total"].map("C$ {:,.2f}".format)
+        df_ui["Participación (%)"] = df_ui["Participación (%)"].map("{:,.2f}%".format)
+        df_ui["Ganancia Neta (C$)"] = df_ui["Ganancia Neta (C$)"].map("C$ {:,.2f}".format)
+        df_ui["Total a Entregar (C$)"] = df_ui["Total a Entregar (C$)"].map("C$ {:,.2f}".format)
+
+        df_ui = df_ui.rename(columns={
+            "socio_id": "ID",
+            "socio": "Socio",
+            "Ahorro_Total": "Capital Total Ahorrado (C$)"
+        })
+
+        columnas_ordenadas = ["ID", "Socio"] + list(meses_nombres.values()) + ["Capital Total Ahorrado (C$)", "Participación (%)", "Ganancia Neta (C$)", "Total a Entregar (C$)"]
+        
+        st.dataframe(df_ui[columnas_ordenadas], use_container_width=True)
 
         st.download_button(
-            label="📥 Exportar Tabla de Liquidación a Excel",
-            data=to_excel(df_liq),
-            file_name=f"liquidacion_anual_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            label="📥 Exportar Tabla Completa de Liquidación a Excel",
+            data=to_excel(df_display_liq),
+            file_name=f"liquidacion_anual_{anio_liq}_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-        st.success("ℹ️ **Cálculo Automático Aplicado:** La utilidad neta descontando egresos se distribuye proporcionalmente a los ahorros aportados.")
+
+        st.success("ℹ️ **Cálculo Equitativo Aplicado:** Los rendimientos se distribuyen considerando tanto el monto ahorrado como los meses que dicho capital permaneció en la caja social (Ponderación Mes a Mes).")
 
 # ==========================================
 # SECCIÓN 10: CIERRE MENSUAL Y REINICIO ANUAL
@@ -1225,11 +1277,14 @@ elif opcion == "📅 Cierre Mensual y Anual":
             st.success(f"¡El año {anio_cierre} ha sido cerrado correctamente! El sistema está listo para el nuevo ciclo.")
             st.rerun()
 
-        st.markdown("---")
-        st.subheader("📚 Historial de Cierres Anuales")
-        with engine.connect() as conn:
-            df_hist_cierres = pd.read_sql(text('SELECT id as "ID", anio as "Año", total_ahorrado as "Total Ahorrado (C$)", total_intereses as "Intereses (C$)", fecha_cierre as "Fecha de Cierre" FROM cierres_anuales ORDER BY anio DESC'), conn)
-        st.dataframe(df_hist_cierres, use_container_width=True)
+    st.markdown("---")
+    st.subheader("📚 Historial de Cierres Anuales")
+    with engine.connect() as conn:
+        df_hist_cierres = pd.read_sql(
+            text('SELECT id as "ID", anio as "Año", total_ahorrado as "Total Ahorrado (C$)", total_intereses as "Intereses (C$)", fecha_cierre as "Fecha de Cierre" FROM cierres_anuales ORDER BY anio DESC'),
+            conn
+        )
+    st.dataframe(df_hist_cierres, use_container_width=True)
 
 # ==========================================
 # SECCIÓN 11: BITÁCORA DE AUDITORÍA
@@ -1243,6 +1298,7 @@ elif opcion == "🛡️ Bitácora de Auditoría":
             text('SELECT id as "ID", fecha as "Fecha y Hora", usuario as "Usuario", accion as "Acción / Descripción" FROM bitacora ORDER BY id DESC LIMIT 200'),
             conn
         )
+
     st.dataframe(df_bit, use_container_width=True)
 
     if not df_bit.empty:
