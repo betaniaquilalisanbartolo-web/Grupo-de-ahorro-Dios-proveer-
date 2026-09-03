@@ -3,7 +3,7 @@ import hashlib
 import os
 import pandas as pd
 import streamlit as st
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import create_engine, text
 
 # ==========================================
@@ -184,14 +184,22 @@ def to_excel(df: pd.DataFrame) -> bytes:
         return b""
     return salida.getvalue()
 
-def exportar_consolidado_excel() -> bytes:
+# MEJORA #6: Exportación con filtro opcional por Año
+def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
     salida = io.BytesIO()
     with engine.connect() as conn:
-        df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
-        df_a = pd.read_sql(text("SELECT * FROM ahorros"), conn)
-        df_p = pd.read_sql(text("SELECT * FROM prestamos"), conn)
-        df_pg = pd.read_sql(text("SELECT * FROM pagos"), conn)
-        df_e = pd.read_sql(text("SELECT * FROM egresos"), conn)
+        if anio_filtro:
+            df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
+            df_a = pd.read_sql(text("SELECT * FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro})
+            df_p = pd.read_sql(text("SELECT * FROM prestamos WHERE EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"a": anio_filtro})
+            df_pg = pd.read_sql(text("SELECT * FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro})
+            df_e = pd.read_sql(text("SELECT * FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro})
+        else:
+            df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
+            df_a = pd.read_sql(text("SELECT * FROM ahorros"), conn)
+            df_p = pd.read_sql(text("SELECT * FROM prestamos"), conn)
+            df_pg = pd.read_sql(text("SELECT * FROM pagos"), conn)
+            df_e = pd.read_sql(text("SELECT * FROM egresos"), conn)
 
     with pd.ExcelWriter(salida, engine="openpyxl") as writer:
         df_s.to_excel(writer, index=False, sheet_name="Socios")
@@ -293,6 +301,7 @@ if opcion == "📊 Panel General":
         df_socios = pd.read_sql(text("SELECT COUNT(*) as total FROM socios WHERE estado = 'Activo'"), conn)
         total_socios = int(df_socios["total"].iloc[0])
 
+        # Préstamos en mora
         query_mora = """
         SELECT p.id, s.nombre, p.monto_prestado, p.fecha_inicio, p.plazo_meses 
         FROM prestamos p 
@@ -300,6 +309,27 @@ if opcion == "📊 Panel General":
         WHERE p.estado = 'Activo' AND (p.fecha_inicio::DATE + (p.plazo_meses || ' month')::INTERVAL) < CURRENT_DATE
         """
         df_mora = pd.read_sql(text(query_mora), conn)
+
+        # MEJORA #1: Préstamos por vencer en 30 días
+        query_por_vencer = """
+        SELECT p.id, s.nombre, p.monto_prestado, p.fecha_inicio, 
+               (p.fecha_inicio::DATE + (p.plazo_meses || ' month')::INTERVAL) as fecha_vencimiento
+        FROM prestamos p 
+        JOIN socios s ON p.socio_id = s.id 
+        WHERE p.estado = 'Activo' 
+          AND (p.fecha_inicio::DATE + (p.plazo_meses || ' month')::INTERVAL) >= CURRENT_DATE
+          AND (p.fecha_inicio::DATE + (p.plazo_meses || ' month')::INTERVAL) <= (CURRENT_DATE + INTERVAL '30 days')
+        """
+        df_por_vencer = pd.read_sql(text(query_por_vencer), conn)
+
+        # MEJORA #1: Cálculo Ratio de Morosidad
+        df_mora_sum = pd.read_sql(text("""
+            SELECT COALESCE(SUM(monto_prestado), 0) as total 
+            FROM prestamos 
+            WHERE estado = 'Activo' AND (fecha_inicio::DATE + (plazo_meses || ' month')::INTERVAL) < CURRENT_DATE
+        """), conn)
+        capital_mora = float(df_mora_sum["total"].iloc[0])
+        ratio_mora = (capital_mora / total_prestado * 100) if total_prestado > 0 else 0.0
 
     fondo_caja = total_ahorrado + total_recaudado - total_prestado - total_egresos
 
@@ -310,10 +340,23 @@ if opcion == "📊 Panel General":
     col4.metric("💸 Egresos / Gastos", f"C$ {total_egresos:,.2f}")
     col5.metric("🏦 Disponible en Caja", f"C$ {fondo_caja:,.2f}")
 
-    if not df_mora.empty:
-        st.error(f"⚠️ **Atención:** Se identificaron **{len(df_mora)} préstamo(s) en MORA**.")
-        with st.expander("👀 Ver Préstamos en Mora"):
-            st.dataframe(df_mora, use_container_width=True)
+    # Panel de Alertas y Morosidad
+    col_a1, col_a2 = st.columns(2)
+    with col_a1:
+        if not df_mora.empty:
+            st.error(f"⚠️ **Atención:** Se identificaron **{len(df_mora)} préstamo(s) en MORA** (Índice de Mora: **{ratio_mora:.1f}%**).")
+            with st.expander("👀 Ver Préstamos en Mora"):
+                st.dataframe(df_mora, use_container_width=True)
+        else:
+            st.success("✅ **Sin morosidad:** Cartera de préstamos al día.")
+
+    with col_a2:
+        if not df_por_vencer.empty:
+            st.warning(f"🔔 **Alerta Temprana:** **{len(df_por_vencer)} préstamo(s)** vencerán en los próximos 30 días.")
+            with st.expander("👀 Ver Préstamos Próximos a Vencer"):
+                st.dataframe(df_por_vencer, use_container_width=True)
+        else:
+            st.info("ℹ️ No hay préstamos por vencer en los próximos 30 días.")
 
     st.markdown("---")
     col_dl1, col_dl2 = st.columns([3, 1])
@@ -321,9 +364,13 @@ if opcion == "📊 Panel General":
         st.subheader("📊 Métricas Rápidas")
         st.info(f"👥 **Socios Activos:** {total_socios} socios registrados.")
     with col_dl2:
+        # MEJORA #6: Exportar con Opción de Filtro de Año
+        anio_exp = st.selectbox("Seleccionar año para filtro (Opcional):", ["Todos"] + list(range(2020, 2101)), index=0)
+        anio_val = None if anio_exp == "Todos" else int(anio_exp)
+        
         st.download_button(
             label="📦 Exportar Copia Completa (Excel)",
-            data=exportar_consolidado_excel(),
+            data=exportar_consolidado_excel(anio_val),
             file_name=f"caja_ahorro_respaldo_{datetime.now().strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
@@ -342,11 +389,23 @@ elif opcion == "👥 Socios":
                 text('SELECT id as "ID", nombre as "Nombre", telefono as "Teléfono", fecha_registro as "Fecha Registro", estado as "Estado" FROM socios ORDER BY id ASC'),
                 conn
             )
-            st.dataframe(df_socios, use_container_width=True)
+            
+            # MEJORA #2: Enlace interactivo a WhatsApp
             if not df_socios.empty:
+                def crear_link_wa(tel):
+                    if pd.notna(tel) and str(tel).strip() != "":
+                        num_limpio = "".join(filter(str.isdigit, str(tel)))
+                        if num_limpio:
+                            return f'<a href="https://wa.me/{num_limpio}" target="_blank">💬 Contactar WhatsApp ({tel})</a>'
+                    return "Sin teléfono"
+
+                df_socios["Acción WhatsApp"] = df_socios["Teléfono"].apply(crear_link_wa)
+                st.write(df_socios.to_html(escape=False, index=False), unsafe_allow_html=True)
+                st.markdown("<br>", unsafe_allow_html=True)
+                
                 st.download_button(
                     label="📥 Exportar Socios a Excel",
-                    data=to_excel(df_socios),
+                    data=to_excel(df_socios.drop(columns=["Acción WhatsApp"], errors="ignore")),
                     file_name=f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
@@ -820,7 +879,7 @@ elif opcion == "📖 Pagos de Préstamos":
     with tab1:
         query_activos = """
         SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_total || ' total)' as label,
-               p.monto_prestado, p.interes_total, p.plazo_meses, p.monto_total
+               p.monto_prestado, p.interes_total, p.plazo_meses, p.monto_total, s.nombre as socio_nombre
         FROM prestamos p
         JOIN socios s ON p.socio_id = s.id
         WHERE p.estado = 'Activo'
@@ -875,10 +934,11 @@ elif opcion == "📖 Pagos de Préstamos":
                         tipo_db = "Capital"
 
                     with engine.begin() as conn:
-                        conn.execute(
+                        res_p = conn.execute(
                             text("""
                             INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
                             VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo)
+                            RETURNING id;
                             """),
                             {
                                 "p_id": p_id,
@@ -889,12 +949,14 @@ elif opcion == "📖 Pagos de Préstamos":
                                 "tipo": tipo_db
                             }
                         )
+                        pago_id_nuevo = res_p.fetchone()[0]
 
                         df_total_p = pd.read_sql(
                             text("SELECT COALESCE(SUM(monto_pagado), 0) as suma FROM pagos WHERE prestamo_id = :p_id"),
                             conn, params={"p_id": p_id}
                         )
                         pagado_hasta_hoy = float(df_total_p["suma"].iloc[0])
+                        saldo_restante = float(datos_p["monto_total"]) - pagado_hasta_hoy
 
                         if pagado_hasta_hoy >= float(datos_p["monto_total"]):
                             conn.execute(text("UPDATE prestamos SET estado = 'Saldado' WHERE id = :p_id"), {"p_id": p_id})
@@ -904,7 +966,29 @@ elif opcion == "📖 Pagos de Préstamos":
                         else:
                             registrar_bitacora(f"Abono de C$ {monto_pago} (Cap: C$ {m_capital}, Int: C$ {m_interes}) para préstamo ID {p_id}")
                             st.success(f"Abono registrado: C$ {m_capital:,.2f} a Capital y C$ {m_interes:,.2f} a Interés.")
-                            st.rerun()
+
+                    # MEJORA #3: Generación e Impresión del Recibo Oficial de Pago
+                    st.markdown("---")
+                    st.subheader("🧾 Recibo Oficial de Pago Generado")
+                    
+                    df_recibo = pd.DataFrame([{
+                        "Comprobante ID": f"REC-{pago_id_nuevo:05d}",
+                        "Fecha Pago": str(fecha_pago),
+                        "Socio": datos_p["socio_nombre"],
+                        "Préstamo Ref.": f"Préstamo #{p_id}",
+                        "Monto Pagado": f"C$ {monto_pago:,.2f}",
+                        "Abono Capital": f"C$ {m_capital:,.2f}",
+                        "Abono Interés": f"C$ {m_interes:,.2f}",
+                        "Saldo Pendiente": f"C$ {max(0.0, saldo_restante):,.2f}"
+                    }])
+                    st.dataframe(df_recibo, use_container_width=True)
+
+                    st.download_button(
+                        label="📄 Descargar Recibo Oficial (Excel)",
+                        data=to_excel(df_recibo),
+                        file_name=f"recibo_pago_{pago_id_nuevo}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
 
     with tab2:
         st.subheader("Historial de Pagos Recibidos")
@@ -1105,16 +1189,21 @@ elif opcion == "🎉 Liquidación Anual":
     st.title("🎉 Cálculo de Liquidación Automática de Fin de Año")
     st.caption("Reparto transparente del capital acumulado e intereses repartidos según el tiempo real de permanencia de los ahorros mes a mes.")
 
-    anio_liq = st.number_input("Seleccionar Año de Liquidación:", min_value=2020, max_value=2100, value=datetime.now().year, key="anio_liq_input")
+    # MEJORA #4: Selección de Mes de Corte / Proyección Anticipada
+    col_l1, col_l2 = st.columns(2)
+    with col_l1:
+        anio_liq = st.number_input("Seleccionar Año de Liquidación:", min_value=2020, max_value=2100, value=datetime.now().year, key="anio_liq_input")
+    with col_l2:
+        mes_corte = st.selectbox("Mes de Corte (Proyección):", list(range(1, 13)), index=11, format_func=lambda x: f"Mes {x} ({['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][x-1]})")
 
     with engine.connect() as conn:
-        df_tot_ahorro = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})
+        df_tot_ahorro = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a AND EXTRACT(MONTH FROM fecha) <= :m"), conn, params={"a": anio_liq, "m": mes_corte})
         gran_total_ahorrado = float(df_tot_ahorro["total"].iloc[0])
 
-        df_tot_intereses = pd.read_sql(text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})
+        df_tot_intereses = pd.read_sql(text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a AND EXTRACT(MONTH FROM fecha) <= :m"), conn, params={"a": anio_liq, "m": mes_corte})
         total_intereses_ganados = float(df_tot_intereses["total"].iloc[0])
 
-        df_tot_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})
+        df_tot_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a AND EXTRACT(MONTH FROM fecha) <= :m"), conn, params={"a": anio_liq, "m": mes_corte})
         total_gastos = float(df_tot_egresos["total"].iloc[0])
 
     utilidad_neta = total_intereses_ganados - total_gastos
@@ -1128,7 +1217,7 @@ elif opcion == "🎉 Liquidación Anual":
     st.markdown("---")
 
     if gran_total_ahorrado == 0:
-        st.warning("No hay aportaciones de ahorros registrados en este año para calcular la liquidación.")
+        st.warning("No hay aportaciones de ahorros registrados en este período para calcular la liquidación.")
     else:
         # Consulta de aportaciones de ahorro por socio y por mes
         query_ahorros_mes = """
@@ -1137,11 +1226,11 @@ elif opcion == "🎉 Liquidación Anual":
                SUM(a.monto) as monto_mes
         FROM socios s
         JOIN ahorros a ON s.id = a.socio_id
-        WHERE s.estado = 'Activo' AND EXTRACT(YEAR FROM a.fecha) = :a
+        WHERE s.estado = 'Activo' AND EXTRACT(YEAR FROM a.fecha) = :a AND EXTRACT(MONTH FROM a.fecha) <= :m
         GROUP BY s.id, s.nombre, EXTRACT(MONTH FROM a.fecha)
         """
         with engine.connect() as conn:
-            df_a_mes = pd.read_sql(text(query_ahorros_mes), conn, params={"a": anio_liq})
+            df_a_mes = pd.read_sql(text(query_ahorros_mes), conn, params={"a": anio_liq, "m": mes_corte})
             df_socios_act = pd.read_sql(text("SELECT id as socio_id, nombre as socio FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
         # Construcción de la matriz mensual
@@ -1154,20 +1243,19 @@ elif opcion == "🎉 Liquidación Anual":
         else:
             df_pivot = pd.DataFrame()
 
-        # Asegurar todas las columnas de meses (1 al 12)
+        # Asegurar todas las columnas de meses
         for m in range(1, 13):
             if m not in df_pivot.columns:
                 df_pivot[m] = 0.0
 
         df_liq_base = df_socios_act.merge(df_pivot, on="socio_id", how="left").fillna(0)
 
-        # Cálculo de Ahorro Ponderado (Monto × Meses de trabajo en el año)
-        # Enero (mes 1) trabaja 12 meses; Diciembre (mes 12) trabaja 1 mes.
+        # Cálculo de Ahorro Ponderado
         df_liq_base["Ahorro_Ponderado"] = 0.0
         df_liq_base["Ahorro_Total"] = 0.0
 
-        for m in range(1, 13):
-            meses_permanencia = 12 - m + 1
+        for m in range(1, mes_corte + 1):
+            meses_permanencia = mes_corte - m + 1
             df_liq_base["Ahorro_Ponderado"] += df_liq_base[m] * meses_permanencia
             df_liq_base["Ahorro_Total"] += df_liq_base[m]
 
@@ -1185,7 +1273,7 @@ elif opcion == "🎉 Liquidación Anual":
         cols_meses_rename = {m: meses_nombres[m] for m in range(1, 13)}
         df_display_liq = df_liq_base.rename(columns=cols_meses_rename)
 
-        st.subheader("🗓️ Detalle de Ahorros Mensuales y Ponderación")
+        st.subheader("📅 Detalle de Ahorros Mensuales y Ponderación")
         
         # Formateo de tabla para presentación en UI
         df_ui = df_display_liq.copy()
@@ -1295,9 +1383,15 @@ elif opcion == "🛡️ Bitácora de Auditoría":
 
     with engine.connect() as conn:
         df_bit = pd.read_sql(
-            text('SELECT id as "ID", fecha as "Fecha y Hora", usuario as "Usuario", accion as "Acción / Descripción" FROM bitacora ORDER BY id DESC LIMIT 200'),
+            text('SELECT id as "ID", fecha as "Fecha y Hora", usuario as "Usuario", accion as "Acción / Descripción" FROM bitacora ORDER BY id DESC LIMIT 500'),
             conn
         )
+
+    # MEJORA #5: Filtro en Bitácora por búsqueda de texto
+    if not df_bit.empty:
+        filtro_bit = st.text_input("🔍 Buscar en la bitácora (ej: 'Eliminación', 'socio', 'Abono'):")
+        if filtro_bit.strip() != "":
+            df_bit = df_bit[df_bit["Acción / Descripción"].str.contains(filtro_bit, case=False, na=False)]
 
     st.dataframe(df_bit, use_container_width=True)
 
