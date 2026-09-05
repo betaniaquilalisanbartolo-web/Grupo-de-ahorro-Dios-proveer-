@@ -1351,6 +1351,8 @@ elif opcion == "📖 Pagos de Préstamos":
             dict_prestamos = dict(
                 zip(df_prestamos_act["label"], df_prestamos_act["id"])
             )
+            
+            # Formulario de registro de pago
             with st.form("form_pago", clear_on_submit=True):
                 prestamo_sel = st.selectbox(
                     "Selecciona el Préstamo *", list(dict_prestamos.keys())
@@ -1420,123 +1422,125 @@ elif opcion == "📖 Pagos de Préstamos":
                 fecha_pago = st.date_input("Fecha del Pago", datetime.now())
                 btn_pago = st.form_submit_button("Registrar Pago")
 
-                if btn_pago:
-                    if tipo_pago == "Completo (Cuota Mensual)":
-                        if monto_pago >= interes_mensual_est:
-                            m_interes = interes_mensual_est
-                            m_capital = monto_pago - m_interes
-                        else:
-                            m_interes = monto_pago
-                            m_capital = 0.0
-                        tipo_db = "Completo"
-                    elif tipo_pago == "Solo Interés":
+            # Procesamiento tras enviar el formulario
+            if btn_pago:
+                if tipo_pago == "Completo (Cuota Mensual)":
+                    if monto_pago >= interes_mensual_est:
+                        m_interes = interes_mensual_est
+                        m_capital = monto_pago - m_interes
+                    else:
                         m_interes = monto_pago
                         m_capital = 0.0
-                        tipo_db = "Interés"
-                    else:
-                        m_capital = monto_pago
-                        m_interes = 0.0
-                        tipo_db = (
-                            "Capital" if tipo_pago == "Abono a Capital" else "Cancelación"
-                        )
+                    tipo_db = "Completo"
+                elif tipo_pago == "Solo Interés":
+                    m_interes = monto_pago
+                    m_capital = 0.0
+                    tipo_db = "Interés"
+                else:
+                    m_capital = monto_pago
+                    m_interes = 0.0
+                    tipo_db = (
+                        "Capital" if tipo_pago == "Abono a Capital" else "Cancelación"
+                    )
 
-                    with motor.begin() as conn:
-                        res_p = conn.execute(
-                            text("""
-                            INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
-                            VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo)
-                            RETURNING id;
-                            """),
-                            {
-                                "p_id": p_id,
-                                "monto": monto_pago,
-                                "capital": m_capital,
-                                "interes": m_interes,
-                                "fecha": str(fecha_pago),
-                                "tipo": tipo_db,
-                            },
-                        )
-                        pago_id_nuevo = res_p.fetchone()[0]
+                with motor.begin() as conn:
+                    res_p = conn.execute(
+                        text("""
+                        INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
+                        VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo)
+                        RETURNING id;
+                        """),
+                        {
+                            "p_id": p_id,
+                            "monto": monto_pago,
+                            "capital": m_capital,
+                            "interes": m_interes,
+                            "fecha": str(fecha_pago),
+                            "tipo": tipo_db,
+                        },
+                    )
+                    pago_id_nuevo = res_p.fetchone()[0]
 
-                        # Verificar si el capital se ha liquidado totalmente
-                        df_total_p = pd.read_sql(
+                    # Verificar si el capital se ha liquidado totalmente
+                    df_total_p = pd.read_sql(
+                        text(
+                            "SELECT COALESCE(SUM(monto_capital), 0) as"
+                            " cap_sum, COALESCE(SUM(monto_pagado), 0) as"
+                            " tot_sum FROM pagos WHERE prestamo_id = :p_id"
+                        ),
+                        conn,
+                        params={"p_id": p_id},
+                    )
+                    cap_pagado_total = float(df_total_p["cap_sum"].iloc[0])
+                    tot_pagado_total = float(df_total_p["tot_sum"].iloc[0])
+
+                    es_saldado = (
+                        cap_pagado_total >= float(datos_p["monto_prestado"])
+                    ) or (
+                        tot_pagado_total >= float(datos_p["monto_total"])
+                    )
+
+                    if es_saldado or tipo_pago == "Cancelación Total Anticipada":
+                        conn.execute(
                             text(
-                                "SELECT COALESCE(SUM(monto_capital), 0) as"
-                                " cap_sum, COALESCE(SUM(monto_pagado), 0) as"
-                                " tot_sum FROM pagos WHERE prestamo_id = :p_id"
+                                "UPDATE prestamos SET estado = 'Saldado'"
+                                " WHERE id = :p_id"
                             ),
-                            conn,
-                            params={"p_id": p_id},
+                            {"p_id": p_id},
                         )
-                        cap_pagado_total = float(df_total_p["cap_sum"].iloc[0])
-                        tot_pagado_total = float(df_total_p["tot_sum"].iloc[0])
-
-                        es_saldado = (
-                            cap_pagado_total >= float(datos_p["monto_prestado"])
-                        ) or (
-                            tot_pagado_total >= float(datos_p["monto_total"])
+                        registrar_bitacora(
+                            f"Préstamo ID {p_id} de"
+                            f" {datos_p['socio_nombre']} saldado / cancelado"
+                            " anticipadamente."
+                        )
+                        st.balloons()
+                        st.success(
+                            "🎉 ¡El préstamo ha sido cancelado/saldado"
+                            " completamente!"
+                        )
+                    else:
+                        registrar_bitacora(
+                            f"Abono de C$ {monto_pago} (Cap: C$"
+                            f" {m_capital}, Int: C$ {m_interes}) para"
+                            f" préstamo ID {p_id}"
+                        )
+                        st.success(
+                            "Abono registrado: C$"
+                            f" {m_capital:,.2f} a Capital y C$"
+                            f" {m_interes:,.2f} a Interés."
                         )
 
-                        if es_saldado or tipo_pago == "Cancelación Total Anticipada":
-                            conn.execute(
-                                text(
-                                    "UPDATE prestamos SET estado = 'Saldado'"
-                                    " WHERE id = :p_id"
-                                ),
-                                {"p_id": p_id},
-                            )
-                            registrar_bitacora(
-                                f"Préstamo ID {p_id} de"
-                                f" {datos_p['socio_nombre']} saldado / cancelado"
-                                " anticipadamente."
-                            )
-                            st.balloons()
-                            st.success(
-                                "🎉 ¡El préstamo ha sido cancelado/saldado"
-                                " completamente!"
-                            )
-                        else:
-                            registrar_bitacora(
-                                f"Abono de C$ {monto_pago} (Cap: C$"
-                                f" {m_capital}, Int: C$ {m_interes}) para"
-                                f" préstamo ID {p_id}"
-                            )
-                            st.success(
-                                "Abono registrado: C$"
-                                f" {m_capital:,.2f} a Capital y C$"
-                                f" {m_interes:,.2f} a Interés."
-                            )
+                capital_restante_despues = max(
+                    0.0,
+                    float(datos_p["monto_prestado"]) - (capital_pagado_prev + m_capital),
+                )
 
-                    capital_restante_despues = max(
-                        0.0,
-                        float(datos_p["monto_prestado"]) - (capital_pagado_prev + m_capital),
-                    )
+                st.markdown("---")
+                st.subheader("🧾 Recibo Oficial de Pago Generado")
+                df_recibo = pd.DataFrame([{
+                    "ID Comprobante": f"REC-{pago_id_nuevo:05d}",
+                    "Fecha Pago": str(fecha_pago),
+                    "Socio": datos_p["socio_nombre"],
+                    "Préstamo Ref.": f"Préstamo #{p_id}",
+                    "Monto Pagado": f"C$ {monto_pago:,.2f}",
+                    "Abono Capital": f"C$ {m_capital:,.2f}",
+                    "Abono Interés": f"C$ {m_interes:,.2f}",
+                    "Capital Pendiente": f"C$ {capital_restante_despues:,.2f}",
+                }])
+                st.dataframe(df_recibo, use_container_width=True)
 
-                    st.markdown("---")
-                    st.subheader("🧾 Recibo Oficial de Pago Generado")
-                    df_recibo = pd.DataFrame([{
-                        "ID Comprobante": f"REC-{pago_id_nuevo:05d}",
-                        "Fecha Pago": str(fecha_pago),
-                        "Socio": datos_p["socio_nombre"],
-                        "Préstamo Ref.": f"Préstamo #{p_id}",
-                        "Monto Pagado": f"C$ {monto_pago:,.2f}",
-                        "Abono Capital": f"C$ {m_capital:,.2f}",
-                        "Abono Interés": f"C$ {m_interes:,.2f}",
-                        "Capital Pendiente": f"C$ {capital_restante_despues:,.2f}",
-                    }])
-                    st.dataframe(df_recibo, use_container_width=True)
-
-                    st.download_button(
-                        label="📄 Descargar Recibo Oficial (Excel)",
-                        data=to_excel(df_recibo),
-                        file_name=(
-                            f"recibo_pago_{pago_id_nuevo}_"
-                            f"{datetime.now().strftime('%Y%m%d')}.xlsx"
-                        ),
-                        mime=(
-                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                        ),
-                    )
+                # CORRECCIÓN: Botón de descarga fuera del bloque st.form(...)
+                st.download_button(
+                    label="📄 Descargar Recibo Oficial (Excel)",
+                    data=to_excel(df_recibo),
+                    file_name=(
+                        f"recibo_pago_{pago_id_nuevo}_"
+                        f"{datetime.now().strftime('%Y%m%d')}.xlsx"
+                    ),
+                    mime=(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    ),
+                )
 
     with tab2:
         st.subheader("Historial de Pagos Recibidos")
