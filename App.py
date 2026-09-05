@@ -520,7 +520,7 @@ elif opcion == "👥 Socios":
         with motor.connect() as conn:
             df_socios = pd.read_sql(
                 text(
-                    'SELECT id as "ID", nombre as "Nombre", teléfono as '
+                    'SELECT id as "ID", nombre as "Nombre", telefono as '
                     '"Teléfono", fecha_registro as "Fecha Registro", estado as '
                     '"Estado" FROM socios ORDER BY id ASC'
                 ),
