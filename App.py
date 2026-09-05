@@ -2259,4 +2259,4 @@ elif opcion == "ðŸ›¡ï¸ BitÃ¡cora de AuditorÃ­a":
             mime=(
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
-    )
+            )
