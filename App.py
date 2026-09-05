@@ -2235,7 +2235,7 @@ elif opcion == "🛡️ Bitácora de Auditoría":
 
     if not df_bit.empty:
         filtro_bit = st.text_input(
-            "🔎 Buscar en la bitácora (ej: 'Eliminación', 'socio', 'Abono'):"
+            "🔍 Buscar en la bitácora (ej: 'Eliminación', 'socio', 'Abono'):"
         )
         if filtro_bit.strip() != "":
             df_bit = df_bit[
