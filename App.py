@@ -2260,4 +2260,3 @@ elif opcion == "🛡️ Bitácora de Auditoría":
                 "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             ),
         )
-u
