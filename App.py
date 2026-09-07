@@ -342,11 +342,18 @@ if opcion == "📊 Panel General":
         df_ahorros = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn)
         total_ahorrado = float(df_ahorros["total"].iloc[0])
 
-        df_prestamos = pd.read_sql(
+        # Capital total otorgado históricamente vs activo
+        df_prestamos_activos = pd.read_sql(
             text("SELECT COALESCE(SUM(monto_prestado), 0) as total FROM prestamos WHERE estado = 'Activo'"),
             conn,
         )
-        total_prestado = float(df_prestamos["total"].iloc[0])
+        total_prestado = float(df_prestamos_activos["total"].iloc[0])
+
+        df_prestamos_historicos = pd.read_sql(
+            text("SELECT COALESCE(SUM(monto_prestado), 0) as total FROM prestamos"),
+            conn,
+        )
+        total_desembolsado_historico = float(df_prestamos_historicos["total"].iloc[0])
 
         df_pagos = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos"), conn)
         total_recaudado = float(df_pagos["total"].iloc[0])
@@ -358,7 +365,8 @@ if opcion == "📊 Panel General":
         total_socios = int(df_socios["total"].iloc[0])
 
         consulta_mora = """
-        SELECT p.id, s.nombre, p.monto_prestado, p.fecha_inicio, p.plazo_meses
+        SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)",
+               p.fecha_inicio as "Fecha Inicio", p.plazo_meses as "Plazo (Meses)"
         FROM prestamos p
         JOIN socios s ON p.socio_id = s.id
         WHERE p.estado = 'Activo'
@@ -367,8 +375,8 @@ if opcion == "📊 Panel General":
         df_mora = pd.read_sql(text(consulta_mora), conn)
 
         consulta_por_vencer = """
-        SELECT p.id, s.nombre, p.monto_prestado, p.fecha_inicio,
-               (p.fecha_inicio + MAKE_INTERVAL(months => p.plazo_meses)) as fecha_vencimiento
+        SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.fecha_inicio as "Fecha Inicio",
+               (p.fecha_inicio + MAKE_INTERVAL(months => p.plazo_meses)) as "Fecha Vencimiento"
         FROM prestamos p
         JOIN socios s ON p.socio_id = s.id
         WHERE p.estado = 'Activo'
@@ -389,11 +397,13 @@ if opcion == "📊 Panel General":
         capital_mora = float(df_mora_sum["total"].iloc[0])
         ratio_mora = (capital_mora / total_prestado * 100) if total_prestado > 0 else 0.0
 
-        fondo_caja = total_ahorrado + total_recaudado - total_prestado - total_egresos
+        # Flujo Real de Efectivo en Caja:
+        # Entradas (Ahorros + Cobros) - Salidas (Total Prestado Histórico + Egresos)
+        fondo_caja = (total_ahorrado + total_recaudado) - (total_desembolsado_historico + total_egresos)
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("💵 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
-    col2.metric("📉 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
+    col2.metric("📈 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
     col3.metric("📥 Cobros/Abonos Totales", f"C$ {total_recaudado:,.2f}")
     col4.metric("💸 Egresos / Gastos", f"C$ {total_egresos:,.2f}")
     col5.metric("🏛️ Disponible en Caja", f"C$ {fondo_caja:,.2f}")
@@ -401,7 +411,7 @@ if opcion == "📊 Panel General":
     col_a1, col_a2 = st.columns(2)
     with col_a1:
         if not df_mora.empty:
-            st.error(f"⚠️ **Atención:** Se identificaron **{len(df_mora)} préstamo(s) en MORA** (Índice de Mora: **{ratio_mora:.1f}%**).")
+            st.warning(f"⚠️ **Atención:** Se identificaron **{len(df_mora)} préstamo(s) en MORA** (Índice de Mora: **{ratio_mora:.1f}%**).")
             with st.expander("👁️ Ver Préstamos en Mora"):
                 st.dataframe(df_mora, use_container_width=True)
         else:
