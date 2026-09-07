@@ -40,8 +40,8 @@ def verificar_contrasena(contrasena_ingresada: str, hash_almacenado: str) -> boo
     """Verifica si la contraseña ingresada coincide con el hash almacenado."""
     try:
         salt_hex, _ = hash_almacenado.split(":")
-        sal = bytes.fromhex(salt_hex)
-        hash_nuevo = hash_password(contrasena_ingresada, sal)
+        salt = bytes.fromhex(salt_hex)
+        hash_nuevo = hash_password(contrasena_ingresada, salt)
         return hash_nuevo == hash_almacenado
     except Exception:
         return False
@@ -55,16 +55,16 @@ def sincronizar_estados_prestamos():
                 UPDATE prestamos
                 SET estado = 'Saldado'
                 WHERE id IN (
-                    SELECT p.id 
+                    SELECT p.id
                     FROM prestamos p
                     LEFT JOIN (
-                        SELECT prestamo_id, 
-                               COALESCE(SUM(monto_capital), 0) as total_cap,
-                               COALESCE(SUM(monto_pagado), 0) as total_pag
-                        FROM pagos 
+                        SELECT prestamo_id,
+                               COALESCE(SUM(monto_capital), 0) AS total_cap,
+                               COALESCE(SUM(monto_pagado), 0) AS total_pag
+                        FROM pagos
                         GROUP BY prestamo_id
                     ) pg ON p.id = pg.prestamo_id
-                    WHERE p.estado = 'Activo' 
+                    WHERE p.estado = 'Activo'
                     AND (pg.total_cap >= p.monto_prestado OR pg.total_pag >= p.monto_total)
                 );
                 """)
@@ -268,7 +268,7 @@ def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
-st.sidebar.title("🔒 Control de Acceso")
+st.sidebar.title("🔐 Control de Acceso")
 
 if not st.session_state.autenticado:
     contrasena_input = st.sidebar.text_input("Contraseña de Administrador", type="password")
@@ -276,7 +276,7 @@ if not st.session_state.autenticado:
         hash_almacenado = obtener_hash_password_bd()
         if hash_almacenado and verificar_contrasena(contrasena_input, hash_almacenado):
             st.session_state.autenticado = True
-            registrar_bitacora("Inicio de sesión exitoso como Administrador.")
+            registrar_bitacora("Inicio de sesión exitosa como Administrador.")
             st.sidebar.success("¡Acceso concedido!")
             st.rerun()
         else:
@@ -336,7 +336,7 @@ opcion = st.sidebar.radio(
 # ==========================================
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
-    st.caption("Resumen financiero consolidado en Córdobas (C$).")
+    st.caption("Resumen financiero consolidado en Córdoba (C$).")
 
     with motor.connect() as conn:
         df_ahorros = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn)
@@ -379,9 +379,9 @@ if opcion == "📊 Panel General":
 
         df_mora_sum = pd.read_sql(
             text("""
-            SELECT COALESCE(SUM(monto_prestado), 0) as total 
-            FROM prestamos 
-            WHERE estado = 'Activo' 
+            SELECT COALESCE(SUM(monto_prestado), 0) as total
+            FROM prestamos
+            WHERE estado = 'Activo'
               AND (fecha_inicio + MAKE_INTERVAL(months => plazo_meses)) < CURRENT_DATE
             """),
             conn,
@@ -738,10 +738,10 @@ elif opcion == "🤝 Préstamos":
                    p.fecha_inicio AS "Fecha Emisión", p.estado AS "Estado"
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
-            LEFT JOIN pagos pg ON p.id = pg.prestamo_id 
-                AND EXTRACT(MONTH FROM pg.fecha) = :mes 
+            LEFT JOIN pagos pg ON p.id = pg.prestamo_id
+                AND EXTRACT(MONTH FROM pg.fecha) = :mes
                 AND EXTRACT(YEAR FROM pg.fecha) = :anio
-            WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :mes 
+            WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :mes
               AND EXTRACT(YEAR FROM p.fecha_inicio) = :anio
             GROUP BY p.id, s.nombre, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, p.estado
             ORDER BY p.id DESC
@@ -1279,7 +1279,7 @@ elif opcion == "📜 Estado de Cuenta":
             )
 
 # ==========================================
-# SECCIÓN 9: LIQUIDACIÓN ANUAL DE SOCIOS (PONDERADA MES A MES)
+# SECCIÓN 9: LIQUIDACIÓN ANUAL DE SOCIOS
 # ==========================================
 elif opcion == "🎉 Liquidación Anual":
     st.title("🎉 Cálculo de Liquidación Automática de Fin de Año")
@@ -1444,7 +1444,7 @@ elif opcion == "📅 Cierre Mensual y Anual":
                 conn.execute(text("DELETE FROM ahorros;"))
                 conn.execute(text("DELETE FROM egresos;"))
                 
-                # Preserva saldos y préstamos activos
+                # Preservar saldos y préstamos activos
                 conn.execute(text("DELETE FROM pagos WHERE prestamo_id IN (SELECT id FROM prestamos WHERE estado IN ('Saldado', 'Cancelado'));"))
                 conn.execute(text("DELETE FROM prestamos WHERE estado IN ('Saldado', 'Cancelado');"))
 
