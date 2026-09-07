@@ -57,7 +57,7 @@ def sincronizar_estados_prestamos():
                 WHERE id IN (
                     SELECT p.id
                     FROM prestamos p
-                    LEFT JOIN (
+                    INNER JOIN (
                         SELECT prestamo_id,
                                COALESCE(SUM(monto_capital), 0) AS total_cap,
                                COALESCE(SUM(monto_pagado), 0) AS total_pag
@@ -342,7 +342,6 @@ if opcion == "📊 Panel General":
         df_ahorros = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn)
         total_ahorrado = float(df_ahorros["total"].iloc[0])
 
-        # Capital total otorgado históricamente vs activo
         df_prestamos_activos = pd.read_sql(
             text("SELECT COALESCE(SUM(monto_prestado), 0) as total FROM prestamos WHERE estado = 'Activo'"),
             conn,
@@ -397,8 +396,6 @@ if opcion == "📊 Panel General":
         capital_mora = float(df_mora_sum["total"].iloc[0])
         ratio_mora = (capital_mora / total_prestado * 100) if total_prestado > 0 else 0.0
 
-        # Flujo Real de Efectivo en Caja:
-        # Entradas (Ahorros + Cobros) - Salidas (Total Prestado Histórico + Egresos)
         fondo_caja = (total_ahorrado + total_recaudado) - (total_desembolsado_historico + total_egresos)
 
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -459,15 +456,24 @@ elif opcion == "👥 Socios":
                 if pd.notna(tel) and str(tel).strip() != "":
                     num_limpio = "".join(filter(str.isdigit, str(tel)))
                     if num_limpio:
-                        return f'<a href="https://wa.me/{num_limpio}" target="_blank">💬 Contactar WhatsApp ({tel})</a>'
-                return "Sin teléfono"
+                        return f"https://wa.me/{num_limpio}"
+                return None
 
-            df_socios["Acción WhatsApp"] = df_socios["Teléfono"].apply(crear_link_wa)
-            st.write(df_socios.to_html(escape=False, index=False), unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
+            df_socios["WhatsApp"] = df_socios["Teléfono"].apply(crear_link_wa)
+            st.dataframe(
+                df_socios,
+                column_config={
+                    "WhatsApp": st.column_config.LinkColumn(
+                        "WhatsApp",
+                        display_text="💬 Abrir Chat"
+                    )
+                },
+                use_container_width=True,
+                hide_index=True
+            )
             st.download_button(
                 label="📥 Exportar Socios a Excel",
-                data=to_excel(df_socios.drop(columns=["Acción WhatsApp"], errors="ignore")),
+                data=to_excel(df_socios.drop(columns=["WhatsApp"], errors="ignore")),
                 file_name=f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
@@ -957,7 +963,6 @@ elif opcion == "📖 Pagos de Préstamos":
             capital_pagado_prev = float(df_cap_actual["cap_pagado"].iloc[0])
             capital_pendiente = max(0.0, float(datos_p["monto_prestado"]) - capital_pagado_prev)
             
-            # Recálculo dinámico basado en capital insoluto
             tasa = float(datos_p["tasa_interes"]) / 100.0
             interes_mensual_est = round(capital_pendiente * tasa, 2)
             capital_mensual_est = round(capital_pendiente / max(1, int(datos_p["plazo_meses"])), 2)
@@ -1324,7 +1329,6 @@ elif opcion == "🎉 Liquidación Anual":
         )
         total_gastos = float(df_tot_egresos["total"].iloc[0])
 
-        # Protección del capital principal ante gastos operacionales
         utilidad_neta = max(0.0, total_intereses_ganados - total_gastos)
 
     c1, c2, c3, c4 = st.columns(4)
@@ -1454,7 +1458,6 @@ elif opcion == "📅 Cierre Mensual y Anual":
                 conn.execute(text("DELETE FROM ahorros;"))
                 conn.execute(text("DELETE FROM egresos;"))
                 
-                # Preservar saldos y préstamos activos
                 conn.execute(text("DELETE FROM pagos WHERE prestamo_id IN (SELECT id FROM prestamos WHERE estado IN ('Saldado', 'Cancelado'));"))
                 conn.execute(text("DELETE FROM prestamos WHERE estado IN ('Saldado', 'Cancelado');"))
 
