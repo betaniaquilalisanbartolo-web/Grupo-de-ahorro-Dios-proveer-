@@ -5,33 +5,51 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 
-# ==========================================
-# 1. CONFIGURACIÓN DE PÁGINA
-# ==========================================
+# ========================================== #
+# 1. CONFIGURACIÓN DE PÁGINA                  #
+# ========================================== #
 st.set_page_config(
     page_title="Caja de Ahorro Comunitario",
     page_icon="💰",
     layout="wide"
 )
 
-# ==========================================
-# 2. GESTIÓN DE BASE DE DATOS (Supabase / PostgreSQL)
-# ==========================================
+# ========================================== #
+# 2. GESTIÓN DE BASE DE DATOS (Supabase / PG) #
+# ========================================== #
 @st.cache_resource
 def obtener_motor():
-    db_url = st.secrets["postgres"]["url"]
+    try:
+        db_url = st.secrets["postgres"]["url"]
+    except Exception:
+        db_url = os.getenv("DATABASE_URL", "")
+
+    if not db_url:
+        st.error("⚠️ No se encontró la URL de conexión a la base de datos en los secretos de Streamlit Cloud.")
+        st.stop()
+
     # Corrección automática si la URL usa el protocolo antiguo
     if db_url.startswith("postgres://"):
         db_url = db_url.replace("postgres://", "postgresql://", 1)
     
-    # Se añade connect_args para asegurar la compatibilidad con SSL en la nube
-    return create_engine(
-        db_url, 
-        pool_pre_ping=True, 
-        pool_recycle=300,
-        connect_args={"sslmode": "require"}
-    )
+    # Asegurar parámetro SSL para Supabase si no está presente
+    if "sslmode" not in db_url:
+        separator = "&" if "?" in db_url else "?"
+        db_url = f"{db_url}{separator}sslmode=require"
+
+    try:
+        engine = create_engine(
+            db_url, 
+            pool_pre_ping=True, 
+            pool_recycle=300,
+            connect_args={"connect_timeout": 10}
+        )
+        return engine
+    except Exception as e:
+        st.error(f"❌ Error crítico al crear el motor de base de datos: {e}")
+        st.stop()
 
 motor = obtener_motor()
 
@@ -82,116 +100,133 @@ def sincronizar_estados_prestamos():
                     );
                 """)
             )
+    except OperationalError as oe:
+        st.error("❌ **Error de conexión con la base de datos:** Comprueba que las credenciales en Streamlit Secrets sean correctas y que Supabase esté activo.")
     except Exception as e:
         st.error(f"Error al sincronizar estados de préstamos: {e}")
 
 def init_db():
-    with motor.begin() as conn:
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS configuracion (
-                    clave VARCHAR(50) PRIMARY KEY,
-                    valor VARCHAR(550) NOT NULL
-                );
-            """)
-        )
-        res = conn.execute(
-            text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
-        ).fetchone()
-        if not res:
-            pass_default_hash = hash_password("admin123")
+    try:
+        with motor.begin() as conn:
             conn.execute(
-                text("INSERT INTO configuracion (clave, valor) VALUES ('admin_password', :val)"),
-                {"val": pass_default_hash},
+                text("""
+                    CREATE TABLE IF NOT EXISTS configuracion (
+                        clave VARCHAR(50) PRIMARY KEY,
+                        valor VARCHAR(550) NOT NULL
+                    );
+                """)
             )
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS socios (
-                    id SERIAL PRIMARY KEY,
-                    nombre VARCHAR(255) NOT NULL,
-                    telefono VARCHAR(50),
-                    fecha_registro DATE NOT NULL,
-                    estado VARCHAR(20) DEFAULT 'Activo'
-                );
-            """)
+            res = conn.execute(
+                text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
+            ).fetchone()
+            if not res:
+                pass_default_hash = hash_password("admin123")
+                conn.execute(
+                    text("INSERT INTO configuracion (clave, valor) VALUES ('admin_password', :val)"),
+                    {"val": pass_default_hash},
+                )
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS socios (
+                        id SERIAL PRIMARY KEY,
+                        nombre VARCHAR(255) NOT NULL,
+                        telefono VARCHAR(50),
+                        fecha_registro DATE NOT NULL,
+                        estado VARCHAR(20) DEFAULT 'Activo'
+                    );
+                """)
+            )
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS ahorros (
+                        id SERIAL PRIMARY KEY,
+                        socio_id INTEGER NOT NULL REFERENCES socios(id),
+                        monto NUMERIC(12, 2) NOT NULL,
+                        fecha DATE NOT NULL,
+                        nota TEXT,
+                        anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+                    );
+                """)
+            )
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS prestamos (
+                        id SERIAL PRIMARY KEY,
+                        socio_id INTEGER NOT NULL REFERENCES socios(id),
+                        monto_prestado NUMERIC(12, 2) NOT NULL,
+                        tasa_interes NUMERIC(5, 2) NOT NULL,
+                        plazo_meses INTEGER NOT NULL,
+                        interes_total NUMERIC(12, 2) NOT NULL,
+                        monto_total NUMERIC(12, 2) NOT NULL,
+                        fecha_inicio DATE NOT NULL,
+                        estado VARCHAR(20) DEFAULT 'Activo',
+                        anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+                    );
+                """)
+            )
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS pagos (
+                        id SERIAL PRIMARY KEY,
+                        prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
+                        monto_pagado NUMERIC(12, 2) NOT NULL,
+                        monto_capital NUMERIC(12, 2) DEFAULT 0.00,
+                        monto_interes NUMERIC(12, 2) DEFAULT 0.00,
+                        fecha DATE NOT NULL,
+                        tipo VARCHAR(20)
+                    );
+                """)
+            )
+            conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital NUMERIC(12, 2) DEFAULT 0.00;"))
+            conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes NUMERIC(12, 2) DEFAULT 0.00;"))
+            conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tipo VARCHAR(20);"))
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS egresos (
+                        id SERIAL PRIMARY KEY,
+                        concepto VARCHAR(255) NOT NULL,
+                        monto NUMERIC(12, 2) NOT NULL,
+                        fecha DATE NOT NULL,
+                        responsable VARCHAR(100)
+                    );
+                """)
+            )
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS cierres_anuales (
+                        id SERIAL PRIMARY KEY,
+                        anio INTEGER NOT NULL,
+                        total_ahorrado NUMERIC(12, 2) NOT NULL,
+                        total_intereses NUMERIC(12, 2) NOT NULL,
+                        fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+            )
+            conn.execute(
+                text("""
+                    CREATE TABLE IF NOT EXISTS bitacora (
+                        id SERIAL PRIMARY KEY,
+                        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        usuario VARCHAR(100) DEFAULT 'Administrador',
+                        accion TEXT NOT NULL
+                    );
+                """)
+            )
+        sincronizar_estados_prestamos()
+    except OperationalError as oe:
+        st.error("❌ **Error de conexión OperationalError:** No se pudo conectar a la base de datos.")
+        st.info(
+            "Verifica lo siguiente:\n"
+            "1. Que los secretos en Streamlit Cloud estén en una sola línea continua y terminen en `?sslmode=require`.\n"
+            "2. Que el proyecto de Supabase no esté pausado.\n"
+            "3. Que la contraseña no tenga espacios en blanco o saltos de línea ocultos."
         )
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS ahorros (
-                    id SERIAL PRIMARY KEY,
-                    socio_id INTEGER NOT NULL REFERENCES socios(id),
-                    monto NUMERIC(12, 2) NOT NULL,
-                    fecha DATE NOT NULL,
-                    nota TEXT,
-                    anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-                );
-            """)
-        )
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS prestamos (
-                    id SERIAL PRIMARY KEY,
-                    socio_id INTEGER NOT NULL REFERENCES socios(id),
-                    monto_prestado NUMERIC(12, 2) NOT NULL,
-                    tasa_interes NUMERIC(5, 2) NOT NULL,
-                    plazo_meses INTEGER NOT NULL,
-                    interes_total NUMERIC(12, 2) NOT NULL,
-                    monto_total NUMERIC(12, 2) NOT NULL,
-                    fecha_inicio DATE NOT NULL,
-                    estado VARCHAR(20) DEFAULT 'Activo',
-                    anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-                );
-            """)
-        )
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS pagos (
-                    id SERIAL PRIMARY KEY,
-                    prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
-                    monto_pagado NUMERIC(12, 2) NOT NULL,
-                    monto_capital NUMERIC(12, 2) DEFAULT 0.00,
-                    monto_interes NUMERIC(12, 2) DEFAULT 0.00,
-                    fecha DATE NOT NULL,
-                    tipo VARCHAR(20)
-                );
-            """)
-        )
-        conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital NUMERIC(12, 2) DEFAULT 0.00;"))
-        conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes NUMERIC(12, 2) DEFAULT 0.00;"))
-        conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tipo VARCHAR(20);"))
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS egresos (
-                    id SERIAL PRIMARY KEY,
-                    concepto VARCHAR(255) NOT NULL,
-                    monto NUMERIC(12, 2) NOT NULL,
-                    fecha DATE NOT NULL,
-                    responsable VARCHAR(100)
-                );
-            """)
-        )
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS cierres_anuales (
-                    id SERIAL PRIMARY KEY,
-                    anio INTEGER NOT NULL,
-                    total_ahorrado NUMERIC(12, 2) NOT NULL,
-                    total_intereses NUMERIC(12, 2) NOT NULL,
-                    fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-        )
-        conn.execute(
-            text("""
-                CREATE TABLE IF NOT EXISTS bitacora (
-                    id SERIAL PRIMARY KEY,
-                    fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    usuario VARCHAR(100) DEFAULT 'Administrador',
-                    accion TEXT NOT NULL
-                );
-            """)
-        )
-    sincronizar_estados_prestamos()
+        with st.expander("Ver detalles técnicos del error"):
+            st.code(str(oe))
+        st.stop()
+    except Exception as ex:
+        st.error(f"❌ Ocurrió un error inesperado al inicializar las tablas: {ex}")
+        st.stop()
 
 if "db_inicializada" not in st.session_state:
     init_db()
@@ -199,15 +234,18 @@ if "db_inicializada" not in st.session_state:
 
 sincronizar_estados_prestamos()
 
-# ==========================================
-# 3. FUNCIONES UTILITARIAS Y DE SEGURIDAD
-# ==========================================
+# ========================================== #
+# 3. FUNCIONES UTILITARIAS Y DE SEGURIDAD    #
+# ========================================== #
 def obtener_hash_password_bd():
-    with motor.connect() as conn:
-        res = conn.execute(
-            text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
-        ).fetchone()
-        return res[0] if res else None
+    try:
+        with motor.connect() as conn:
+            res = conn.execute(
+                text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
+            ).fetchone()
+            return res[0] if res else None
+    except Exception:
+        return None
 
 def registrar_bitacora(accion: str):
     try:
@@ -263,9 +301,9 @@ def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
     salida.seek(0)
     return salida.getvalue()
 
-# ==========================================
-# 4. AUTENTICACIÓN / CONTROL DE ACCESO
-# ==========================================
+# ========================================== #
+# 4. AUTENTICACIÓN / CONTROL DE ACCESO       #
+# ========================================== #
 if "autenticado" not in st.session_state:
     st.session_state.autenticado = False
 
@@ -310,9 +348,9 @@ else:
         st.session_state.autenticado = False
         st.rerun()
 
-# ==========================================
-# 5. MENÚ NAVEGACIÓN LATERAL
-# ==========================================
+# ========================================== #
+# 5. MENÚ NAVEGACIÓN LATERAL                   #
+# ========================================== #
 st.sidebar.markdown("---")
 st.sidebar.title("🏛️ Menú Principal")
 opcion = st.sidebar.radio(
@@ -320,21 +358,21 @@ opcion = st.sidebar.radio(
     [
         "📊 Panel General",
         "👥 Socios",
-        " Ahorros y Cuotas",
+        "💰 Ahorros y Cuotas",
         "🤝 Préstamos",
         "🧮 Simulador de Préstamos",
         "📖 Pagos de Préstamos",
         "💸 Egresos y Gastos",
         "📜 Estado de Cuenta",
-        "🎉 Liquidación Annual",
+        "🎉 Liquidación Anual",
         "📅 Cierre Mensual y Anual",
         "🛡️ Bitácora de Auditoría",
     ],
 )
 
-# ==========================================
-# SECCIÓN 1: PANEL GENERAL (DASHBOARD)
-# ==========================================
+# ========================================== #
+# SECCIÓN 1: PANEL GENERAL (DASHBOARD)       #
+# ========================================== #
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
     st.caption("Resumen financiero consolidado en Córdoba (C$).")
@@ -395,7 +433,7 @@ if opcion == "📊 Panel General":
     fondo_caja = (total_ahorrado + total_recaudado) - (total_desembolsado_historico + total_egresos)
 
     col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric(" Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
+    col1.metric("💰 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
     col2.metric("📈 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
     col3.metric("📥 Cobros/Abonos Totales", f"C$ {total_recaudado:,.2f}")
     col4.metric("💸 Egresos / Gastos", f"C$ {total_egresos:,.2f}")
@@ -433,9 +471,9 @@ if opcion == "📊 Panel General":
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-# ==========================================
-# SECCIÓN 2: GESTIÓN DE SOCIOS
-# ==========================================
+# ========================================== #
+# SECCIÓN 2: GESTIÓN DE SOCIOS               #
+# ========================================== #
 elif opcion == "👥 Socios":
     st.title("👥 Control de Socios")
     tab1, tab2, tab3 = st.tabs(["📋 Listado de Socios", "➕ Registrar Nuevo Socio", "✏️ Editar / Eliminar Socio"])
@@ -534,11 +572,11 @@ elif opcion == "👥 Socios":
                     st.warning(f"Socio ID #{id_socio_sel} y sus registros vinculados han sido eliminados.")
                     st.rerun()
 
-# ==========================================
-# SECCIÓN 3: AHORROS Y CUOTAS
-# ==========================================
-elif opcion == " Ahorros y Cuotas":
-    st.title(" Registro de Ahorros")
+# ========================================== #
+# SECCIÓN 3: AHORROS Y CUOTAS                #
+# ========================================== #
+elif opcion == "💰 Ahorros y Cuotas":
+    st.title("💰 Registro de Ahorros")
     with motor.connect() as conn:
         df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
@@ -637,9 +675,9 @@ elif opcion == " Ahorros y Cuotas":
                         st.warning("Registro de ahorro eliminado correctamente.")
                         st.rerun()
 
-# ==========================================
-# SECCIÓN 4: PRÉSTAMOS
-# ==========================================
+# ========================================== #
+# SECCIÓN 4: PRÉSTAMOS                       #
+# ========================================== #
 elif opcion == "🤝 Préstamos":
     st.title("🤝 Gestión de Préstamos")
     with motor.connect() as conn:
@@ -755,7 +793,7 @@ elif opcion == "🤝 Préstamos":
                 pct_cumplimiento = (m_int_cobrado_mes / m_int_mensual_esperado * 100) if m_int_mensual_esperado > 0 else 0.0
 
                 col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-                col_r1.metric(" Total Capital Prestado", f"C$ {m_cap:,.2f}")
+                col_r1.metric("💰 Total Capital Prestado", f"C$ {m_cap:,.2f}")
                 col_r2.metric("📈 Interés Mensual Esperado", f"C$ {m_int_mensual_esperado:,.2f}")
                 col_r3.metric("📥 Interés Cobrado (Mes)", f"C$ {m_int_cobrado_mes:,.2f}")
                 col_r4.metric("📊 Cumplimiento de Interés", f"{pct_cumplimiento:.1f}%")
@@ -841,9 +879,9 @@ elif opcion == "🤝 Préstamos":
                         st.warning("Préstamo eliminado correctamente.")
                         st.rerun()
 
-# ==========================================
-# SECCIÓN 5: SIMULADOR DE PRÉSTAMOS
-# ==========================================
+# ========================================== #
+# SECCIÓN 5: SIMULADOR DE PRÉSTAMOS          #
+# ========================================== #
 elif opcion == "🧮 Simulador de Préstamos":
     st.title("🧮 Simulador Libre de Préstamos")
     st.caption("Calculadora previa para estimar amortizaciones sin alterar la base de datos.")
@@ -865,7 +903,7 @@ elif opcion == "🧮 Simulador de Préstamos":
 
         c1, c2, c3 = st.columns(3)
         c1.metric("📊 Interés Total", f"C$ {int_total:,.2f}")
-        c2.metric(" Total a Pagar", f"C$ {monto_total:,.2f}")
+        c2.metric("💰 Total a Pagar", f"C$ {monto_total:,.2f}")
         c3.metric("📅 Cuota Mensual Fija", f"C$ {cuota_mensual:,.2f}")
 
         cronograma = []
@@ -902,13 +940,13 @@ elif opcion == "🧮 Simulador de Préstamos":
 
         c1, c2, c3 = st.columns(3)
         c1.metric("📊 Interés Total Estimado", f"C$ {tot_int:,.2f}")
-        c2.metric(" Total a Pagar", f"C$ {(sim_monto + tot_int):,.2f}")
+        c2.metric("💰 Total a Pagar", f"C$ {(sim_monto + tot_int):,.2f}")
         c3.metric("📅 Cuota Mensual Fija", f"C$ {cuota:,.2f}")
         st.dataframe(pd.DataFrame(cronograma), use_container_width=True)
 
-# ==========================================
-# SECCIÓN 6: REGISTRO DE PAGOS DE PRÉSTAMOS
-# ==========================================
+# ========================================== #
+# SECCIÓN 6: REGISTRO DE PAGOS DE PRÉSTAMOS  #
+# ========================================== #
 elif opcion == "📖 Pagos de Préstamos":
     st.title("📖 Registro de Abonos y Pagos")
     tab1, tab2, tab3 = st.tabs(["➕ Registrar Abono", "📜 Historial de Pagos", "✏️ Editar / Borrar Pago"])
@@ -1016,7 +1054,7 @@ elif opcion == "📖 Pagos de Préstamos":
 
                     capital_restante_despues = max(0.0, capital_pendiente - m_capital)
                     st.markdown("---")
-                    st.subheader("🛍️ Recibo Oficial de Pago Generado")
+                    st.subheader("🧾 Recibo Oficial de Pago Generado")
                     df_recibo = pd.DataFrame([{
                         "ID Comprobante": f"REC-{pago_id_nuevo:05d}",
                         "Fecha Pago": str(fecha_pago),
@@ -1112,9 +1150,9 @@ elif opcion == "📖 Pagos de Préstamos":
                     st.warning("Pago eliminado.")
                     st.rerun()
 
-# ==========================================
-# SECCIÓN 7: EGRESOS Y GASTOS OPERATIVOS
-# ==========================================
+# ========================================== #
+# SECCIÓN 7: EGRESOS Y GASTOS OPERATIVOS     #
+# ========================================== #
 elif opcion == "💸 Egresos y Gastos":
     st.title("💸 Control de Egresos y Gastos Operativos")
     st.caption("Registro de gastos administrativos o imprevistos de la caja.")
@@ -1154,9 +1192,9 @@ elif opcion == "💸 Egresos y Gastos":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-# ==========================================
-# SECCIÓN 8: ESTADO DE CUENTA
-# ==========================================
+# ========================================== #
+# SECCIÓN 8: ESTADO DE CUENTA                #
+# ========================================== #
 elif opcion == "📜 Estado de Cuenta":
     st.title("📜 Estado de Cuenta Individual")
     st.caption("Consulta e imprime la ficha detallada de ahorro y préstamos por socio.")
@@ -1194,7 +1232,7 @@ elif opcion == "📜 Estado de Cuenta":
         st.markdown(f"**Fecha de emisión:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         c1, c2 = st.columns(2)
-        c1.metric(" Capital Total Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
+        c1.metric("💰 Capital Total Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
         c2.metric("📉 Préstamos Activos (Capital Pendiente)", f"C$ {total_prestado_socio:,.2f}")
 
         st.markdown("### 📜 Detalle de Ahorros")
@@ -1258,10 +1296,10 @@ elif opcion == "📜 Estado de Cuenta":
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
-# ==========================================
-# SECCIÓN 9: LIQUIDACIÓN ANUAL DE SOCIOS
-# ==========================================
-elif opcion == "🎉 Liquidación Annual":
+# ========================================== #
+# SECCIÓN 9: LIQUIDACIÓN ANUAL               #
+# ========================================== #
+elif opcion == "🎉 Liquidación Anual":
     st.title("🎉 Cálculo de Liquidación Automática de Fin de Año")
     st.caption("Reparto transparente del capital acumulado e intereses repartidos según el tiempo real de permanencia de los ahorros mes a mes.")
 
@@ -1294,7 +1332,7 @@ elif opcion == "🎉 Liquidación Annual":
     utilidad_neta = max(0.0, total_intereses_ganados - total_gastos)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric(" Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
+    c1.metric("💰 Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
     c2.metric("📈 Intereses Ganados", f"C$ {total_intereses_ganados:,.2f}")
     c3.metric("💸 Egresos de Caja", f"C$ {total_gastos:,.2f}")
     c4.metric("🏛️ Utilidad Neta a Repartir", f"C$ {utilidad_neta:,.2f}")
@@ -1367,9 +1405,9 @@ elif opcion == "🎉 Liquidación Annual":
         )
         st.success("ℹ️ **Cálculo Equitativo Aplicado:** Los rendimientos se distribuirán considerando tanto el monto ahorrado como los meses que dicho capital permaneció en la caja social (Ponderación Mes a Mes).")
 
-# ==========================================
-# SECCIÓN 10: CIERRE MENSUAL Y REINICIO ANUAL
-# ==========================================
+# ========================================== #
+# SECCIÓN 10: CIERRE MENSUAL Y REINICIO ANUAL#
+# ========================================== #
 elif opcion == "📅 Cierre Mensual y Anual":
     st.title("📅 Módulo de Cierre Mensual y Anual")
     st.caption("Control mensual de caja e historial de liquidaciones cerradas.")
@@ -1390,7 +1428,7 @@ elif opcion == "📅 Cierre Mensual y Anual":
             tot_ahorro_m = float(pd.read_sql(text(consulta_mensual_ahorro), conn, params={"mes": mes_sel, "anio": anio_sel})["total"].iloc[0])
             tot_pagos_m = float(pd.read_sql(text(query_mensual_pagos), conn, params={"mes": mes_sel, "anio": anio_sel})["total"].iloc[0])
 
-        st.metric(f" Ahorros del Mes ({mes_sel}/{anio_sel})", f"C$ {tot_ahorro_m:,.2f}")
+        st.metric(f"💰 Ahorros del Mes ({mes_sel}/{anio_sel})", f"C$ {tot_ahorro_m:,.2f}")
         st.metric(f"📥 Pagos/Cobros Recibidos en el Mes ({mes_sel}/{anio_sel})", f"C$ {tot_pagos_m:,.2f}")
 
     with tab2:
@@ -1428,9 +1466,9 @@ elif opcion == "📅 Cierre Mensual y Anual":
             )
         st.dataframe(df_hist_cierres, use_container_width=True)
 
-# ==========================================
-# SECCIÓN 11: BITÁCORA DE AUDITORÍA
-# ==========================================
+# ========================================== #
+# SECCIÓN 11: BITÁCORA DE AUDITORÍA          #
+# ========================================== #
 elif opcion == "🛡️ Bitácora de Auditoría":
     st.title("🛡️ Bitácora y Registro de Movimientos del Sistema")
     st.caption("Registro de auditoría de todas las acciones y modificaciones realizadas por los administradores.")
