@@ -5,7 +5,6 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import OperationalError
 
 # ========================================== #
 # 1. CONFIGURACIÓN DE PÁGINA                  #
@@ -17,27 +16,20 @@ st.set_page_config(
 )
 
 # ========================================== #
-# 2. GESTIÓN DE BASE DE DATOS (Supabase / PG) #
+# 2. GESTIÓN DE BASE DE DATOS (SQLite Local) #
 # ========================================== #
 @st.cache_resource
 def obtener_motor():
+    # SQLite guarda la base de datos de forma persistente en un archivo local
+    db_path = "caja_ahorro.db"
+    db_url = f"sqlite:///{db_path}"
+    
     try:
-        p = st.secrets["postgres"]
-        db_url = f"postgresql://{p['user']}:{p['password']}@{p['host']}:{p['port']}/{p['dbname']}?sslmode=require"
-    except Exception as e:
-        st.error("⚠️ No se encontraron las credenciales correctas en los secretos de Streamlit Cloud.")
-        st.stop()
-
-    try:
-        engine = create_engine(
-            db_url, 
-            pool_pre_ping=True, 
-            pool_recycle=300,
-            connect_args={"connect_timeout": 10}
-        )
+        # check_same_thread=False es necesario para SQLite en entornos web multihilo como Streamlit
+        engine = create_engine(db_url, connect_args={"check_same_thread": False})
         return engine
     except Exception as e:
-        st.error(f"❌ Error crítico al crear el motor de base de datos: {e}")
+        st.error(f"❌ Error crítico al crear el motor de base de datos local: {e}")
         st.stop()
 
 motor = obtener_motor()
@@ -89,8 +81,6 @@ def sincronizar_estados_prestamos():
                     );
                 """)
             )
-    except OperationalError as oe:
-        st.error("❌ **Error de conexión con la base de datos:** Comprueba que las credenciales individuales en Streamlit Secrets sean correctas y que Supabase esté activo.")
     except Exception as e:
         st.error(f"Error al sincronizar estados de préstamos: {e}")
 
@@ -117,73 +107,70 @@ def init_db():
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS socios (
-                        id SERIAL PRIMARY KEY,
-                        nombre VARCHAR(255) NOT NULL,
-                        telefono VARCHAR(50),
-                        fecha_registro DATE NOT NULL,
-                        estado VARCHAR(20) DEFAULT 'Activo'
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        nombre TEXT NOT NULL,
+                        telefono TEXT,
+                        fecha_registro TEXT NOT NULL,
+                        estado TEXT DEFAULT 'Activo'
                     );
                 """)
             )
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS ahorros (
-                        id SERIAL PRIMARY KEY,
-                        socio_id INTEGER NOT NULL REFERENCES socios(id),
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        socio_id INTEGER NOT NULL,
                         monto NUMERIC(12, 2) NOT NULL,
-                        fecha DATE NOT NULL,
+                        fecha TEXT NOT NULL,
                         nota TEXT,
-                        anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+                        anio INTEGER DEFAULT (strftime('%Y', 'now'))
                     );
                 """)
             )
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS prestamos (
-                        id SERIAL PRIMARY KEY,
-                        socio_id INTEGER NOT NULL REFERENCES socios(id),
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        socio_id INTEGER NOT NULL,
                         monto_prestado NUMERIC(12, 2) NOT NULL,
                         tasa_interes NUMERIC(5, 2) NOT NULL,
                         plazo_meses INTEGER NOT NULL,
                         interes_total NUMERIC(12, 2) NOT NULL,
                         monto_total NUMERIC(12, 2) NOT NULL,
-                        fecha_inicio DATE NOT NULL,
-                        estado VARCHAR(20) DEFAULT 'Activo',
-                        anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+                        fecha_inicio TEXT NOT NULL,
+                        estado TEXT DEFAULT 'Activo',
+                        anio INTEGER DEFAULT (strftime('%Y', 'now'))
                     );
                 """)
             )
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS pagos (
-                        id SERIAL PRIMARY KEY,
-                        prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        prestamo_id INTEGER NOT NULL,
                         monto_pagado NUMERIC(12, 2) NOT NULL,
                         monto_capital NUMERIC(12, 2) DEFAULT 0.00,
                         monto_interes NUMERIC(12, 2) DEFAULT 0.00,
-                        fecha DATE NOT NULL,
-                        tipo VARCHAR(20)
+                        fecha TEXT NOT NULL,
+                        tipo TEXT
                     );
                 """)
             )
-            conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital NUMERIC(12, 2) DEFAULT 0.00;"))
-            conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes NUMERIC(12, 2) DEFAULT 0.00;"))
-            conn.execute(text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tipo VARCHAR(20);"))
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS egresos (
-                        id SERIAL PRIMARY KEY,
-                        concepto VARCHAR(255) NOT NULL,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        concepto TEXT NOT NULL,
                         monto NUMERIC(12, 2) NOT NULL,
-                        fecha DATE NOT NULL,
-                        responsable VARCHAR(100)
+                        fecha TEXT NOT NULL,
+                        responsable TEXT
                     );
                 """)
             )
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS cierres_anuales (
-                        id SERIAL PRIMARY KEY,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
                         anio INTEGER NOT NULL,
                         total_ahorrado NUMERIC(12, 2) NOT NULL,
                         total_intereses NUMERIC(12, 2) NOT NULL,
@@ -194,24 +181,14 @@ def init_db():
             conn.execute(
                 text("""
                     CREATE TABLE IF NOT EXISTS bitacora (
-                        id SERIAL PRIMARY KEY,
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
                         fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        usuario VARCHAR(100) DEFAULT 'Administrador',
+                        usuario TEXT DEFAULT 'Administrador',
                         accion TEXT NOT NULL
                     );
                 """)
             )
         sincronizar_estados_prestamos()
-    except OperationalError as oe:
-        st.error("❌ **Error de conexión OperationalError:** No se pudo conectar a la base de datos.")
-        st.info(
-            "Verifica lo siguiente:\n"
-            "1. Que las credenciales individuales en los secretos de Streamlit Cloud sean exactas.\n"
-            "2. Que el proyecto de Supabase no esté pausado."
-        )
-        with st.expander("Ver detalles técnicos del error"):
-            st.code(str(oe))
-        st.stop()
     except Exception as ex:
         st.error(f"❌ Ocurrió un error inesperado al inicializar las tablas: {ex}")
         st.stop()
@@ -262,16 +239,16 @@ def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
         if anio_filtro:
             df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
             df_a = pd.read_sql(
-                text("SELECT * FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro}
+                text("SELECT * FROM ahorros WHERE strftime('%Y', fecha) = :a"), conn, params={"a": str(anio_filtro)}
             )
             df_p = pd.read_sql(
-                text("SELECT * FROM prestamos WHERE EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"a": anio_filtro}
+                text("SELECT * FROM prestamos WHERE strftime('%Y', fecha_inicio) = :a"), conn, params={"a": str(anio_filtro)}
             )
             df_pg = pd.read_sql(
-                text("SELECT * FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro}
+                text("SELECT * FROM pagos WHERE strftime('%Y', fecha) = :a"), conn, params={"a": str(anio_filtro)}
             )
             df_e = pd.read_sql(
-                text("SELECT * FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro}
+                text("SELECT * FROM egresos WHERE strftime('%Y', fecha) = :a"), conn, params={"a": str(anio_filtro)}
             )
         else:
             df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
@@ -393,17 +370,17 @@ if opcion == "📊 Panel General":
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
             WHERE p.estado = 'Activo' 
-              AND (p.fecha_inicio + MAKE_INTERVAL(months => p.plazo_meses)) < CURRENT_DATE
+              AND date(p.fecha_inicio, '+' || p.plazo_meses || ' months') < date('now')
         """
         df_mora = pd.read_sql(text(consulta_mora), conn)
 
         consulta_por_vencer = """
-            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.fecha_inicio as "Fecha Inicio", (p.fecha_inicio + MAKE_INTERVAL(months => p.plazo_meses)) as "Fecha Vencimiento"
+            SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", p.fecha_inicio as "Fecha Inicio", date(p.fecha_inicio, '+' || p.plazo_meses || ' months') as "Fecha Vencimiento"
             FROM prestamos p
             JOIN socios s ON p.socio_id = s.id
             WHERE p.estado = 'Activo' 
-              AND (p.fecha_inicio + MAKE_INTERVAL(months => p.plazo_meses)) >= CURRENT_DATE
-              AND (p.fecha_inicio + MAKE_INTERVAL(months => p.plazo_meses)) <= (CURRENT_DATE + INTERVAL '30 days')
+              AND date(p.fecha_inicio, '+' || p.plazo_meses || ' months') >= date('now')
+              AND date(p.fecha_inicio, '+' || p.plazo_meses || ' months') <= date('now', '+30 days')
         """
         df_por_vencer = pd.read_sql(text(consulta_por_vencer), conn)
 
@@ -412,7 +389,7 @@ if opcion == "📊 Panel General":
                 SELECT COALESCE(SUM(monto_prestado), 0) as total 
                 FROM prestamos 
                 WHERE estado = 'Activo' 
-                  AND (fecha_inicio + MAKE_INTERVAL(months => plazo_meses)) < CURRENT_DATE
+                  AND date(fecha_inicio, '+' || plazo_meses || ' months') < date('now')
             """), conn
         )
         capital_mora = float(df_mora_sum["total"].iloc[0])
@@ -762,10 +739,10 @@ elif opcion == "🤝 Préstamos":
                 FROM prestamos p
                 JOIN socios s ON p.socio_id = s.id
                 LEFT JOIN pagos pg ON p.id = pg.prestamo_id 
-                     AND EXTRACT(MONTH FROM pg.fecha) = :mes 
-                     AND EXTRACT(YEAR FROM pg.fecha) = :anio
-                WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :mes 
-                  AND EXTRACT(YEAR FROM p.fecha_inicio) = :anio
+                     AND CAST(strftime('%m', pg.fecha) AS INTEGER) = :mes 
+                     AND CAST(strftime('%Y', pg.fecha) AS INTEGER) = :anio
+                WHERE CAST(strftime('%m', p.fecha_inicio) AS INTEGER) = :mes 
+                  AND CAST(strftime('%Y', p.fecha_inicio) AS INTEGER) = :anio
                 GROUP BY p.id, s.nombre, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, p.estado
                 ORDER BY p.id DESC
             """
@@ -1015,12 +992,12 @@ elif opcion == "📖 Pagos de Préstamos":
                         res_p = conn.execute(
                             text("""
                                 INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
-                                VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo)
-                                RETURNING id;
+                                VALUES (:p_id, :monto, :capital, :interes, :fecha, :tipo);
                             """),
                             {"p_id": p_id, "monto": monto_pago, "capital": m_capital, "interes": m_interes, "fecha": str(fecha_pago), "tipo": tipo_db},
                         )
-                        pago_id_nuevo = res_p.fetchone()[0]
+                        # Obtener último ID insertado en SQLite
+                        pago_id_nuevo = conn.execute(text("SELECT last_insert_rowid()")).fetchone()[0]
 
                         df_total_p = pd.read_sql(
                             text("SELECT COALESCE(SUM(monto_capital), 0) as cap_sum FROM pagos WHERE prestamo_id = :p_id"),
@@ -1203,7 +1180,7 @@ elif opcion == "📜 Estado de Cuenta":
 
             df_prestamo_socio = pd.read_sql(
                 text("""
-                    SELECT COALESCE(SUM(GREATEST(0, p.monto_prestado - COALESCE(pg.total_cap, 0))), 0) as total 
+                    SELECT COALESCE(SUM(MAX(0, p.monto_prestado - COALESCE(pg.total_cap, 0))), 0) as total 
                     FROM prestamos p 
                     LEFT JOIN (
                         SELECT prestamo_id, COALESCE(SUM(monto_capital), 0) as total_cap 
@@ -1237,8 +1214,8 @@ elif opcion == "📜 Estado de Cuenta":
                 text("""
                     SELECT p.id as "ID Préstamo", p.monto_prestado as "Capital Inicial (C$)", p.interes_total as "Interés Total Original (C$)", 
                            p.tasa_interes as "Tasa (%)", COALESCE(SUM(pg.monto_capital), 0.00) as "Capital Pagado (C$)", 
-                           GREATEST(0.00, (p.monto_prestado - COALESCE(SUM(pg.monto_capital), 0.00))) as "Capital Pendiente (C$)", 
-                           ROUND(GREATEST(0.00, (p.monto_prestado - COALESCE(SUM(pg.monto_capital), 0.00))) * (p.tasa_interes / 100.0), 2) as "Interés Mensual Actualizado (C$)", 
+                           MAX(0.00, (p.monto_prestado - COALESCE(SUM(pg.monto_capital), 0.00))) as "Capital Pendiente (C$)", 
+                           ROUND(MAX(0.00, (p.monto_prestado - COALESCE(SUM(pg.monto_capital), 0.00))) * (p.tasa_interes / 100.0), 2) as "Interés Mensual Actualizado (C$)", 
                            CASE WHEN (p.monto_prestado - COALESCE(SUM(pg.monto_capital), 0.00)) <= 0 THEN 'Saldado' ELSE p.estado END as "Estado", 
                            p.fecha_inicio as "Fecha Inicio"
                     FROM prestamos p 
@@ -1300,20 +1277,20 @@ elif opcion == "🎉 Liquidación Anual":
 
     with motor.connect() as conn:
         df_tot_ahorro = pd.read_sql(
-            text("SELECT COALESCE(SUM(monto), 0) AS total FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a AND EXTRACT(MONTH FROM fecha) <= :m"),
-            conn, params={"a": anio_liq, "m": mes_corte},
+            text("SELECT COALESCE(SUM(monto), 0) AS total FROM ahorros WHERE strftime('%Y', fecha) = :a AND CAST(strftime('%m', fecha) AS INTEGER) <= :m"),
+            conn, params={"a": str(anio_liq), "m": mes_corte},
         )
         gran_total_ahorrado = float(df_tot_ahorro["total"].iloc[0])
 
         df_tot_intereses = pd.read_sql(
-            text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a AND EXTRACT(MONTH FROM fecha) <= :m"),
-            conn, params={"a": anio_liq, "m": mes_corte},
+            text("SELECT COALESCE(SUM(COALESCE(monto_interes, 0)), 0) as total FROM pagos WHERE strftime('%Y', fecha) = :a AND CAST(strftime('%m', fecha) AS INTEGER) <= :m"),
+            conn, params={"a": str(anio_liq), "m": mes_corte},
         )
         total_intereses_ganados = float(df_tot_intereses["total"].iloc[0])
 
         df_tot_egresos = pd.read_sql(
-            text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a AND EXTRACT(MONTH FROM fecha) <= :m"),
-            conn, params={"a": anio_liq, "m": mes_corte},
+            text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos WHERE strftime('%Y', fecha) = :a AND CAST(strftime('%m', fecha) AS INTEGER) <= :m"),
+            conn, params={"a": str(anio_liq), "m": mes_corte},
         )
         total_gastos = float(df_tot_egresos["total"].iloc[0])
 
@@ -1330,14 +1307,14 @@ elif opcion == "🎉 Liquidación Anual":
         st.warning("No hay aportaciones de ahorros registrados en este período para calcular la liquidación.")
     else:
         query_ahorros_mes = """
-            SELECT s.id as socio_id, s.nombre as socio, EXTRACT(MONTH FROM a.fecha)::INTEGER as mes, SUM(a.monto) as monto_mes
+            SELECT s.id as socio_id, s.nombre as socio, CAST(strftime('%m', a.fecha) AS INTEGER) as mes, SUM(a.monto) as monto_mes
             FROM socios s
             JOIN ahorros a ON s.id = a.socio_id
-            WHERE s.estado = 'Activo' AND EXTRACT(YEAR FROM a.fecha) = :a AND EXTRACT(MONTH FROM a.fecha) <= :m
-            GROUP BY s.id, s.nombre, EXTRACT(MONTH FROM a.fecha)
+            WHERE s.estado = 'Activo' AND strftime('%Y', a.fecha) = :a AND CAST(strftime('%m', a.fecha) AS INTEGER) <= :m
+            GROUP BY s.id, s.nombre, strftime('%m', a.fecha)
         """
         with motor.connect() as conn:
-            df_a_mes = pd.read_sql(text(query_ahorros_mes), conn, params={"a": anio_liq, "m": mes_corte})
+            df_a_mes = pd.read_sql(text(query_ahorros_mes), conn, params={"a": str(anio_liq), "m": mes_corte})
             df_socios_act = pd.read_sql(text("SELECT id as socio_id, nombre as socio FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
         meses_nombres = {1: "Ene", 2: "Feb", 3: "Mar", 4: "Abr", 5: "May", 6: "Jun", 7: "Jul", 8: "Ago", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dic"}
@@ -1409,8 +1386,8 @@ elif opcion == "📅 Cierre Mensual y Anual":
         with col_m2:
             anio_sel = st.number_input("Seleccionar Año", min_value=2020, max_value=2100, value=datetime.now().year)
 
-        consulta_mensual_ahorro = "SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE EXTRACT(MONTH FROM fecha) = :mes AND EXTRACT(YEAR FROM fecha) = :anio"
-        query_mensual_pagos = "SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos WHERE EXTRACT(MONTH FROM fecha) = :mes AND EXTRACT(YEAR FROM fecha) = :anio"
+        consulta_mensual_ahorro = "SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE CAST(strftime('%m', fecha) AS INTEGER) = :mes AND CAST(strftime('%Y', fecha) AS INTEGER) = :anio"
+        query_mensual_pagos = "SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos WHERE CAST(strftime('%m', fecha) AS INTEGER) = :mes AND CAST(strftime('%Y', fecha) AS INTEGER) = :anio"
 
         with motor.connect() as conn:
             tot_ahorro_m = float(pd.read_sql(text(consulta_mensual_ahorro), conn, params={"mes": mes_sel, "anio": anio_sel})["total"].iloc[0])
