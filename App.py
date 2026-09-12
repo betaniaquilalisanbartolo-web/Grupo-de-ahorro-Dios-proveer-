@@ -22,22 +22,11 @@ st.set_page_config(
 @st.cache_resource
 def obtener_motor():
     try:
-        db_url = st.secrets["postgres"]["url"]
-    except Exception:
-        db_url = os.getenv("DATABASE_URL", "")
-
-    if not db_url:
-        st.error("⚠️ No se encontró la URL de conexión a la base de datos en los secretos de Streamlit Cloud.")
+        p = st.secrets["postgres"]
+        db_url = f"postgresql://{p['user']}:{p['password']}@{p['host']}:{p['port']}/{p['dbname']}?sslmode=require"
+    except Exception as e:
+        st.error("⚠️ No se encontraron las credenciales correctas en los secretos de Streamlit Cloud.")
         st.stop()
-
-    # Corrección automática si la URL usa el protocolo antiguo
-    if db_url.startswith("postgres://"):
-        db_url = db_url.replace("postgres://", "postgresql://", 1)
-    
-    # Asegurar parámetro SSL para Supabase si no está presente
-    if "sslmode" not in db_url:
-        separator = "&" if "?" in db_url else "?"
-        db_url = f"{db_url}{separator}sslmode=require"
 
     try:
         engine = create_engine(
@@ -217,9 +206,8 @@ def init_db():
         st.error("❌ **Error de conexión OperationalError:** No se pudo conectar a la base de datos.")
         st.info(
             "Verifica lo siguiente:\n"
-            "1. Que los secretos en Streamlit Cloud estén en una sola línea continua y terminen en `?sslmode=require`.\n"
-            "2. Que el proyecto de Supabase no esté pausado.\n"
-            "3. Que la contraseña no tenga espacios en blanco o saltos de línea ocultos."
+            "1. Que las credenciales individuales en los secretos de Streamlit Cloud sean exactas.\n"
+            "2. Que el proyecto de Supabase no esté pausado."
         )
         with st.expander("Ver detalles técnicos del error"):
             st.code(str(oe))
