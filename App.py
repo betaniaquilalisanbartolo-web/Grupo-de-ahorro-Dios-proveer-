@@ -90,7 +90,7 @@ def sincronizar_estados_prestamos():
                 """)
             )
     except OperationalError as oe:
-        st.error("❌ **Error de conexión con la base de datos:** Comprueba que las credenciales en Streamlit Secrets sean correctas y que Supabase esté activo.")
+        st.error("❌ **Error de conexión con la base de datos:** Comprueba que las credenciales individuales en Streamlit Secrets sean correctas y que Supabase esté activo.")
     except Exception as e:
         st.error(f"Error al sincronizar estados de préstamos: {e}")
 
