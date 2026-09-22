@@ -421,7 +421,6 @@ if opcion == "📊 Panel General":
         )
         total_socios = int(df_socios["total"].iloc[0])
 
-        # CORRECCIÓN CONSULTAS SQL: Uso de MAKE_INTERVAL para compatibilidad PostgreSQL
         query_mora = """
         SELECT p.id, s.nombre, p.monto_prestado, p.fecha_inicio, p.plazo_meses
         FROM prestamos p
@@ -1965,17 +1964,18 @@ elif opcion == "🎉 Liquidación Anual":
         }
 
         if not df_a_mes.empty:
-            df_pivot = df_a_mes.pivot(
-                index="socio_id", columns="mes", values="monto_mes"
+            # Corrección aplicada: se mapea con reset_index para evitar KeyError en columnas duplicadas/multiindex
+            df_pivot = df_a_mes.pivot_table(
+                index="socio_id", columns="mes", values="monto_mes", aggfunc="sum"
             ).fillna(0)
+            df_pivot = df_pivot.reset_index()
         else:
-            df_pivot = pd.DataFrame()
+            df_pivot = pd.DataFrame(columns=["socio_id"])
 
         for m in range(1, 13):
             if m not in df_pivot.columns:
                 df_pivot[m] = 0.0
 
-        # CORRECCIÓN EN MERGE: Se evita error al integrar columnas numéricas de meses
         df_liq_base = df_socios_act.merge(
             df_pivot, on="socio_id", how="left"
         ).fillna(0)
@@ -2010,7 +2010,8 @@ elif opcion == "🎉 Liquidación Anual":
         st.subheader("📅 Detalle de Ahorros Mensuales y Ponderación")
         df_ui = df_display_liq.copy()
         for m_nom in meses_nombres.values():
-            df_ui[m_nom] = df_ui[m_nom].map("C$ {:,.2f}".format)
+            if m_nom in df_ui.columns:
+                df_ui[m_nom] = df_ui[m_nom].map("C$ {:,.2f}".format)
 
         df_ui["Ahorro_Total"] = df_ui["Ahorro_Total"].map("C$ {:,.2f}".format)
         df_ui["Participación (%)"] = df_ui["Participación (%)"].map(
