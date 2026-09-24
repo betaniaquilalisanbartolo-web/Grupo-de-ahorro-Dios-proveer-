@@ -21,7 +21,13 @@ st.set_page_config(
 @st.cache_resource
 def obtener_motor():
     db_url = st.secrets["postgres"]["url"]
-    # Configuración optimizada para psycopg (v3) y el pooler de Supabase
+    
+    # Forzar el uso del driver moderno psycopg (v3) para evitar conflictos en la nube
+    if db_url.startswith("postgresql://"):
+        db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+    elif db_url.startswith("postgres://"):
+        db_url = db_url.replace("postgres://", "postgresql+psycopg://", 1)
+        
     return create_engine(
         db_url,
         pool_pre_ping=True,
