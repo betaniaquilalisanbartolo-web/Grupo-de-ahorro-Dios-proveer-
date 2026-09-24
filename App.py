@@ -21,16 +21,26 @@ st.set_page_config(
 @st.cache_resource
 def obtener_motor():
     db_url = st.secrets["postgres"]["url"]
-    # Configuración estándar y directa para psycopg2 y Supabase
     return create_engine(
         db_url,
         pool_pre_ping=True,
         pool_recycle=300,
-        connect_args={"connect_timeout": 10},
+        connect_args={"connect_timeout": 15},
     )
 
 
-motor = obtener_motor()
+try:
+    motor = obtener_motor()
+except Exception as e:
+    st.error(
+        "❌ **Error crítico de conexión a Supabase:** No se pudo establecer"
+        " comunicación con la base de datos. \n\n"
+        "**Posibles causas:**\n"
+        "1. La contraseña en tus secretos contiene caracteres especiales sin codificar (ej. `@` debe ser `%40`).\n"
+        "2. El host o puerto especificado no es accesible desde Streamlit Cloud.\n\n"
+        f"Detalle técnico: {e}"
+    )
+    st.stop()
 
 
 def hash_password(password: str, salt: bytes = None) -> str:
@@ -205,8 +215,12 @@ def init_db():
 
 
 if "db_inicializada" not in st.session_state:
-    init_db()
-    st.session_state.db_inicializada = True
+    try:
+        init_db()
+        st.session_state.db_inicializada = True
+    except Exception as e:
+        st.error(f"Error al inicializar las tablas en la base de datos: {e}")
+        st.stop()
 
 
 # ==========================================
@@ -1970,7 +1984,6 @@ elif opcion == "🎉 Liquidación Anual":
         }
 
         if not df_a_mes.empty:
-            # Corrección aplicada: se mapea con reset_index para evitar KeyError en columnas duplicadas/multiindex
             df_pivot = df_a_mes.pivot_table(
                 index="socio_id", columns="mes", values="monto_mes", aggfunc="sum"
             ).fillna(0)
