@@ -1318,18 +1318,16 @@ elif opcion == "🧮 Simulador de Préstamos":
         st.dataframe(pd.DataFrame(cronograma), use_container_width=True)
 
 # ==========================================
-# SECCIÓN 6: REGISTRO DE PAGOS DE PRÉSTAMOS
+# SECCIÓN 6: REGISTRO DE PAGOS DE PRÉSTAMOS (ACTUALIZADA)
 # ==========================================
 elif opcion == "📖 Pagos de Préstamos":
     st.title("📖 Registro de Abonos y Pagos")
-    tab1, tab2, tab3 = st.tabs(
-        ["➕ Registrar Abono", "📜 Historial de Pagos", "✏️ Editar / Borrar Pago"]
-    )
+    tab1, tab2, tab3 = st.tabs(["➕ Registrar Abono", "📜 Historial de Pagos", "✏️ Editar / Borrar Pago"])
 
     with tab1:
         query_activos = """
         SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_prestado || ' capital)' as label,
-               p.monto_prestado, p.interes_total, p.plazo_meses, p.monto_total, s.nombre as socio_nombre
+               p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio, s.nombre as socio_nombre
         FROM prestamos p
         JOIN socios s ON p.socio_id = s.id
         WHERE p.estado = 'Activo'
@@ -1340,45 +1338,26 @@ elif opcion == "📖 Pagos de Préstamos":
         if df_prestamos_act.empty:
             st.info("No hay préstamos activos pendientes de pago.")
         else:
-            dict_prestamos = dict(
-                zip(df_prestamos_act["label"], df_prestamos_act["id"])
-            )
+            dict_prestamos = dict(zip(df_prestamos_act["label"], df_prestamos_act["id"]))
             with st.form("form_pago", clear_on_submit=True):
-                prestamo_sel = st.selectbox(
-                    "Selecciona el Préstamo *", list(dict_prestamos.keys())
-                )
+                prestamo_sel = st.selectbox("Selecciona el Préstamo *", list(dict_prestamos.keys()))
                 p_id = dict_prestamos[prestamo_sel]
-                datos_p = df_prestamos_act[
-                    df_prestamos_act["id"] == p_id
-                ].iloc[0]
+                datos_p = df_prestamos_act[df_prestamos_act["id"] == p_id].iloc[0]
 
-                # Calcular estado actual del capital prestado
+                # 1. Calcular capital ya pagado previamente
                 with motor.connect() as conn:
                     df_cap_actual = pd.read_sql(
-                        text(
-                            "SELECT COALESCE(SUM(monto_capital), 0) as"
-                            " cap_pagado, COALESCE(SUM(monto_pagado), 0) as"
-                            " tot_pagado FROM pagos WHERE prestamo_id = :p_id"
-                        ),
-                        conn,
-                        params={"p_id": p_id},
+                        text("SELECT COALESCE(SUM(monto_capital), 0) as cap_pagado FROM pagos WHERE prestamo_id = :p_id"),
+                        conn, params={"p_id": p_id}
                     )
                 capital_pagado_prev = float(df_cap_actual["cap_pagado"].iloc[0])
-                capital_pendiente = (
-                    float(datos_p["monto_prestado"]) - capital_pagado_prev
-                )
+                capital_pendiente = float(datos_p["monto_prestado"]) - capital_pagado_prev
 
-                interes_mensual_est = round(
-                    float(datos_p["interes_total"])
-                    / int(datos_p["plazo_meses"]),
-                    2,
-                )
-                capital_mensual_est = round(
-                    float(datos_p["monto_prestado"])
-                    / int(datos_p["plazo_meses"]),
-                    2,
-                )
-                cuota_completa_est = capital_mensual_est + interes_mensual_est
+                # 2. Lógica exacta de Interés Mensual sobre Saldo / Capital Pendiente Actual
+                tasa_mensual_pct = float(datos_p["tasa_interes"]) / 100.0
+                interes_mensual_calculado = round(capital_pendiente * tasa_mensual_pct, 2)
+                capital_mensual_est = round(float(datos_p["monto_prestado"]) / int(datos_p["plazo_meses"]), 2)
+                cuota_completa_est = capital_mensual_est + interes_mensual_calculado
 
                 tipo_pago = st.selectbox(
                     "Tipo de Abono",
@@ -1386,54 +1365,43 @@ elif opcion == "📖 Pagos de Préstamos":
                         "Completo (Cuota Mensual)",
                         "Solo Interés",
                         "Abono a Capital",
-                        "Cancelación Total Anticipada",
-                    ],
+                        "Cancelación Total Anticipada (Ajuste Automático)"
+                    ]
                 )
 
                 if tipo_pago == "Completo (Cuota Mensual)":
                     monto_sugerido = cuota_completa_est
                 elif tipo_pago == "Solo Interés":
-                    monto_sugerido = interes_mensual_est
+                    monto_sugerido = interes_mensual_calculado
                 elif tipo_pago == "Abono a Capital":
                     monto_sugerido = capital_mensual_est
-                else:
-                    monto_sugerido = max(0.0, capital_pendiente)
+                else:  # Cancelación Total Anticipada
+                    monto_sugerido = capital_pendiente + interes_mensual_calculado
 
-                st.caption(
-                    "💡 **Capital pendiente actual de este préstamo:** C$"
-                    f" {capital_pendiente:,.2f}"
-                )
+                st.caption(f"💡 **Capital pendiente actual:** C$ {capital_pendiente:,.2f} | **Interés correspondiente al mes:** C$ {interes_mensual_calculado:,.2f}")
 
-                monto_pago = st.number_input(
-                    "Monto del Pago/Abono (C$) *",
-                    min_value=1.0,
-                    value=float(monto_sugerido),
-                    step=10.0,
-                )
+                monto_pago = st.number_input("Monto del Pago/Abono (C$) *", min_value=1.0, value=float(monto_sugerido), step=10.0)
                 fecha_pago = st.date_input("Fecha del Pago", datetime.now())
-                btn_pago = st.form_submit_button("Registrar Pago")
+                btn_pago = st.form_submit_button("Registrar Pago y Ajustar Automáticamente")
 
                 if btn_pago:
                     if tipo_pago == "Completo (Cuota Mensual)":
-                        if monto_pago >= interes_mensual_est:
-                            m_interes = interes_mensual_est
-                            m_capital = monto_pago - m_interes
-                        else:
-                            m_interes = monto_pago
-                            m_capital = 0.0
+                        m_interes = min(monto_pago, interes_mensual_calculado)
+                        m_capital = max(0.0, monto_pago - m_interes)
                         tipo_db = "Completo"
                     elif tipo_pago == "Solo Interés":
                         m_interes = monto_pago
                         m_capital = 0.0
                         tipo_db = "Interés"
-                    else:  # Abono a Capital o Cancelación Total
-                        m_capital = monto_pago
+                    elif tipo_pago == "Abono a Capital":
                         m_interes = 0.0
-                        tipo_db = (
-                            "Capital"
-                            if tipo_pago == "Abono a Capital"
-                            else "Cancelación"
-                        )
+                        m_capital = monto_pago
+                        tipo_db = "Capital"
+                    else:  # Cancelación Total Anticipada
+                        m_capital = capital_pendiente
+                        m_interes = interes_mensual_calculado
+                        monto_pago = m_capital + m_interes
+                        tipo_db = "Cancelación"
 
                     with motor.begin() as conn:
                         res_p = conn.execute(
@@ -1448,76 +1416,43 @@ elif opcion == "📖 Pagos de Préstamos":
                                 "capital": m_capital,
                                 "interes": m_interes,
                                 "fecha": str(fecha_pago),
-                                "tipo": tipo_db,
-                            },
+                                "tipo": tipo_db
+                            }
                         )
                         pago_id_nuevo = res_p.fetchone()[0]
 
-                        # Verificar si el capital se ha liquidado totalmente
+                        # Comprobar si el capital pendiente llegó a 0 o si se seleccionó Cancelación
                         df_total_p = pd.read_sql(
-                            text(
-                                "SELECT COALESCE(SUM(monto_capital), 0) as"
-                                " cap_sum, COALESCE(SUM(monto_pagado), 0) as"
-                                " tot_sum FROM pagos WHERE prestamo_id = :p_id"
-                            ),
-                            conn,
-                            params={"p_id": p_id},
+                            text("SELECT COALESCE(SUM(monto_capital), 0) as cap_sum FROM pagos WHERE prestamo_id = :p_id"),
+                            conn, params={"p_id": p_id}
                         )
                         cap_pagado_total = float(df_total_p["cap_sum"].iloc[0])
-                        tot_pagado_total = float(df_total_p["tot_sum"].iloc[0])
+                        es_saldado = (cap_pagado_total >= float(datos_p["monto_prestado"])) or (tipo_db == "Cancelación")
 
-                        es_saldado = (
-                            cap_pagado_total >= float(datos_p["monto_prestado"])
-                        ) or (
-                            tot_pagado_total >= float(datos_p["monto_total"])
-                        )
-
-                        if es_saldado or tipo_pago == "Cancelación Total Anticipada":
+                        if es_saldado:
                             conn.execute(
-                                text(
-                                    "UPDATE prestamos SET estado = 'Saldado'"
-                                    " WHERE id = :p_id"
-                                ),
-                                {"p_id": p_id},
+                                text("UPDATE prestamos SET estado = 'Saldado' WHERE id = :p_id"),
+                                {"p_id": p_id}
                             )
-                            registrar_bitacora(
-                                f"Préstamo ID {p_id} de"
-                                f" {datos_p['socio_nombre']} saldado / cancelado"
-                                " anticipadamente."
-                            )
+                            registrar_bitacora(f"Préstamo ID {p_id} de {datos_p['socio_nombre']} cancelado anticipadamente con ajuste automático de intereses.")
                             st.balloons()
-                            st.success(
-                                "🎉 ¡El préstamo ha sido cancelado/saldado"
-                                " completamente!"
-                            )
+                            st.success("🎉 ¡Préstamo cancelado y saldado con éxito! Se ajustaron automáticamente los intereses futuros.")
                         else:
-                            registrar_bitacora(
-                                f"Abono de C$ {monto_pago} (Cap: C$"
-                                f" {m_capital}, Int: C$ {m_interes}) para"
-                                f" préstamo ID {p_id}"
-                            )
-                            st.success(
-                                "Abono registrado: C$"
-                                f" {m_capital:,.2f} a Capital y C$"
-                                f" {m_interes:,.2f} a Interés."
-                            )
+                            registrar_bitacora(f"Abono registrado: C$ {monto_pago} (Capital: C$ {m_capital}, Interés: C$ {m_interes}) para préstamo ID {p_id}")
+                            st.success(f"Abono registrado correctamente: C$ {m_capital:,.2f} a Capital y C$ {m_interes:,.2f} a Interés.")
 
-                    capital_restante_despues = max(
-                        0.0,
-                        float(datos_p["monto_prestado"])
-                        - (capital_pagado_prev + m_capital),
-                    )
+                    capital_restante_despues = max(0.0, float(datos_p["monto_prestado"]) - (capital_pagado_prev + m_capital))
 
                     st.markdown("---")
-                    st.subheader("🧾 Recibo Oficial de Pago Generado")
+                    st.subheader("🧾 Recibo Oficial con Desglose Automático")
                     df_recibo = pd.DataFrame([{
                         "ID Comprobante": f"REC-{pago_id_nuevo:05d}",
                         "Fecha Pago": str(fecha_pago),
                         "Socio": datos_p["socio_nombre"],
                         "Préstamo Ref.": f"Préstamo #{p_id}",
                         "Monto Pagado": f"C$ {monto_pago:,.2f}",
-                        "Abono Capital": f"C$ {m_capital:,.2f}",
-                        "Abono Interés": f"C$ {m_interes:,.2f}",
+                        "Abono a Capital": f"C$ {m_capital:,.2f}",
+                        "Ganancia Interés": f"C$ {m_interes:,.2f}",
                         "Capital Pendiente": f"C$ {capital_restante_despues:,.2f}",
                     }])
                     st.dataframe(df_recibo, use_container_width=True)
