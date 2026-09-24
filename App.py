@@ -401,7 +401,7 @@ opcion = st.sidebar.radio(
 )
 
 # ==========================================
-# SECCIÓN 1: PANEL GENERAL (DASHBOARD)
+# SECCIÓN 1: PANEL GENERAL (DASHBOARD) - CORREGIDO
 # ==========================================
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
@@ -413,20 +413,40 @@ if opcion == "📊 Panel General":
         )
         total_ahorrado = float(df_ahorros["total"].iloc[0])
 
-        df_prestamos = pd.read_sql(
+        # Capital en la calle (Préstamos Activos)
+        df_prestamos_act = pd.read_sql(
             text(
                 "SELECT COALESCE(SUM(monto_prestado), 0) as total FROM"
                 " prestamos WHERE estado = 'Activo'"
             ),
             conn,
         )
-        total_prestado = float(df_prestamos["total"].iloc[0])
+        total_prestado_activo = float(df_prestamos_act["total"].iloc[0])
 
+        # HISTÓRICO TOTAL DE PRÉSTAMOS DESEMBOLSADOS (Para el cálculo exacto de efectivo en caja)
+        df_prestamos_hist = pd.read_sql(
+            text(
+                "SELECT COALESCE(SUM(monto_prestado), 0) as total FROM"
+                " prestamos"
+            ),
+            conn,
+        )
+        total_prestado_historico = float(
+            df_prestamos_hist["total"].iloc[0]
+        )
+
+        # Cobros / Abonos totales y desglose
         df_pagos = pd.read_sql(
-            text("SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos"),
+            text(
+                "SELECT COALESCE(SUM(monto_pagado), 0) as total,"
+                " COALESCE(SUM(monto_capital), 0) as capital,"
+                " COALESCE(SUM(monto_interes), 0) as interes FROM pagos"
+            ),
             conn,
         )
         total_recaudado = float(df_pagos["total"].iloc[0])
+        total_capital_devuelto = float(df_pagos["capital"].iloc[0])
+        total_interes_ganado = float(df_pagos["interes"].iloc[0])
 
         df_egresos = pd.read_sql(
             text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos"), conn
@@ -472,19 +492,29 @@ if opcion == "📊 Panel General":
         )
         capital_mora = float(df_mora_sum["total"].iloc[0])
         ratio_mora = (
-            (capital_mora / total_prestado * 100) if total_prestado > 0 else 0.0
+            (capital_mora / total_prestado_activo * 100) if total_prestado_activo > 0 else 0.0
         )
 
+        # FÓRMULA CONTABLE EXACTA DE EFECTIVO EN CAJA
         fondo_caja = (
-            total_ahorrado + total_recaudado - total_prestado - total_egresos
+            total_ahorrado
+            + total_recaudado
+            - total_prestado_historico
+            - total_egresos
         )
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("💵 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
-    col2.metric("📉 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
-    col3.metric("📥 Cobros/Abonos Totales", f"C$ {total_recaudado:,.2f}")
+    col2.metric("📉 Capital Prestado Activo", f"C$ {total_prestado_activo:,.2f}")
+    col3.metric("📥 Cobros Totales", f"C$ {total_recaudado:,.2f}")
     col4.metric("💸 Egresos / Gastos", f"C$ {total_egresos:,.2f}")
-    col5.metric("🏦 Disponible en Caja", f"C$ {fondo_caja:,.2f}")
+    col5.metric("🏦 Efectivo Real en Caja", f"C$ {fondo_caja:,.2f}")
+
+    st.info(
+        f"📊 **Desglose de Cobros Recibidos:** Capital devuelto por socios:"
+        f" **C$ {total_capital_devuelto:,.2f}** | Ganancia total por intereses:"
+        f" **C$ {total_interes_ganado:,.2f}**"
+    )
 
     col_a1, col_a2 = st.columns(2)
     with col_a1:
@@ -1318,7 +1348,7 @@ elif opcion == "🧮 Simulador de Préstamos":
         st.dataframe(pd.DataFrame(cronograma), use_container_width=True)
 
 # ==========================================
-# SECCIÓN 6: REGISTRO DE PAGOS DE PRÉSTAMOS (ACTUALIZADA)
+# SECCIÓN 6: REGISTRO DE PAGOS DE PRÉSTAMOS
 # ==========================================
 elif opcion == "📖 Pagos de Préstamos":
     st.title("📖 Registro de Abonos y Pagos")
@@ -1344,7 +1374,6 @@ elif opcion == "📖 Pagos de Préstamos":
                 p_id = dict_prestamos[prestamo_sel]
                 datos_p = df_prestamos_act[df_prestamos_act["id"] == p_id].iloc[0]
 
-                # 1. Calcular capital ya pagado previamente
                 with motor.connect() as conn:
                     df_cap_actual = pd.read_sql(
                         text("SELECT COALESCE(SUM(monto_capital), 0) as cap_pagado FROM pagos WHERE prestamo_id = :p_id"),
@@ -1353,7 +1382,6 @@ elif opcion == "📖 Pagos de Préstamos":
                 capital_pagado_prev = float(df_cap_actual["cap_pagado"].iloc[0])
                 capital_pendiente = float(datos_p["monto_prestado"]) - capital_pagado_prev
 
-                # 2. Lógica exacta de Interés Mensual sobre Saldo / Capital Pendiente Actual
                 tasa_mensual_pct = float(datos_p["tasa_interes"]) / 100.0
                 interes_mensual_calculado = round(capital_pendiente * tasa_mensual_pct, 2)
                 capital_mensual_est = round(float(datos_p["monto_prestado"]) / int(datos_p["plazo_meses"]), 2)
@@ -1375,7 +1403,7 @@ elif opcion == "📖 Pagos de Préstamos":
                     monto_sugerido = interes_mensual_calculado
                 elif tipo_pago == "Abono a Capital":
                     monto_sugerido = capital_mensual_est
-                else:  # Cancelación Total Anticipada
+                else:
                     monto_sugerido = capital_pendiente + interes_mensual_calculado
 
                 st.caption(f"💡 **Capital pendiente actual:** C$ {capital_pendiente:,.2f} | **Interés correspondiente al mes:** C$ {interes_mensual_calculado:,.2f}")
@@ -1397,7 +1425,7 @@ elif opcion == "📖 Pagos de Préstamos":
                         m_interes = 0.0
                         m_capital = monto_pago
                         tipo_db = "Capital"
-                    else:  # Cancelación Total Anticipada
+                    else:
                         m_capital = capital_pendiente
                         m_interes = interes_mensual_calculado
                         monto_pago = m_capital + m_interes
@@ -1421,7 +1449,6 @@ elif opcion == "📖 Pagos de Préstamos":
                         )
                         pago_id_nuevo = res_p.fetchone()[0]
 
-                        # Comprobar si el capital pendiente llegó a 0 o si se seleccionó Cancelación
                         df_total_p = pd.read_sql(
                             text("SELECT COALESCE(SUM(monto_capital), 0) as cap_sum FROM pagos WHERE prestamo_id = :p_id"),
                             conn, params={"p_id": p_id}
