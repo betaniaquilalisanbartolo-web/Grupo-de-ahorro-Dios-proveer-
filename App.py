@@ -401,7 +401,7 @@ opcion = st.sidebar.radio(
 )
 
 # ==========================================
-# SECCIÓN 1: PANEL GENERAL (DASHBOARD) - CORREGIDO
+# SECCIÓN 1: PANEL GENERAL (DASHBOARD)
 # ==========================================
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
@@ -413,7 +413,6 @@ if opcion == "📊 Panel General":
         )
         total_ahorrado = float(df_ahorros["total"].iloc[0])
 
-        # Capital en la calle (Préstamos Activos)
         df_prestamos_act = pd.read_sql(
             text(
                 "SELECT COALESCE(SUM(monto_prestado), 0) as total FROM"
@@ -423,7 +422,6 @@ if opcion == "📊 Panel General":
         )
         total_prestado_activo = float(df_prestamos_act["total"].iloc[0])
 
-        # HISTÓRICO TOTAL DE PRÉSTAMOS DESEMBOLSADOS (Para el cálculo exacto de efectivo en caja)
         df_prestamos_hist = pd.read_sql(
             text(
                 "SELECT COALESCE(SUM(monto_prestado), 0) as total FROM"
@@ -431,11 +429,8 @@ if opcion == "📊 Panel General":
             ),
             conn,
         )
-        total_prestado_historico = float(
-            df_prestamos_hist["total"].iloc[0]
-        )
+        total_prestado_historico = float(df_prestamos_hist["total"].iloc[0])
 
-        # Cobros / Abonos totales y desglose
         df_pagos = pd.read_sql(
             text(
                 "SELECT COALESCE(SUM(monto_pagado), 0) as total,"
@@ -495,7 +490,6 @@ if opcion == "📊 Panel General":
             (capital_mora / total_prestado_activo * 100) if total_prestado_activo > 0 else 0.0
         )
 
-        # FÓRMULA CONTABLE EXACTA DE EFECTIVO EN CAJA
         fondo_caja = (
             total_ahorrado
             + total_recaudado
