@@ -8,11 +8,60 @@ import streamlit as st
 from sqlalchemy import create_engine, text
 
 # ==========================================
-# 1. CONFIGURACIÓN DE PÁGINA
+# 1. CONFIGURACIÓN DE PÁGINA Y ESTILOS CSS PROFESIONALES
 # ==========================================
 st.set_page_config(
     page_title="Caja de Ahorro Comunitario", page_icon="💰", layout="wide"
 )
+
+# Inyección de CSS para eliminar el doble fondo, unificar tonos y modernizar tarjetas
+st.markdown("""
+    <style>
+        /* Unificar el fondo principal de la aplicación y la barra lateral */
+        .stApp {
+            background-color: #0e1117;
+        }
+        section[data-testid="stSidebar"] {
+            background-color: #161b22;
+            border-right: 1px solid #30363d;
+        }
+
+        /* Eliminar efectos de capas o sombras extrañas en los bloques principales */
+        div.block-container {
+            padding-top: 2rem;
+            background-color: transparent;
+        }
+
+        /* Estilo moderno para tarjetas financieras o contenedores */
+        .caja-card {
+            background-color: #161b22;
+            border: 1px solid #30363d;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            margin-bottom: 15px;
+        }
+        .caja-titulo {
+            color: #8b949e;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+        .caja-monto {
+            color: #58a6ff;
+            font-size: 26px;
+            font-weight: bold;
+        }
+        
+        /* Redondear botones y campos de formulario para mejor UX */
+        div.stButton > button {
+            border-radius: 8px;
+            font-weight: 600;
+        }
+    </style>
+""", unsafe_allow_html=True)
 
 
 # ==========================================
