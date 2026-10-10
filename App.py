@@ -266,7 +266,7 @@ def generar_recibo_pdf(
       fontSize=18,
       leading=22,
       textColor=colors.HexColor("#1A365D"),
-      alignment=1,  # Centrado
+      alignment=1,
   )
 
   style_sub = ParagraphStyle(
@@ -304,7 +304,6 @@ def generar_recibo_pdf(
 
   story = []
 
-  # Encabezado principal
   story.append(Paragraph("<b>CAJA DE AHORRO COMUNITARIO</b>", style_header))
   story.append(
       Paragraph("Comprobante Oficial de Pago de Préstamo", style_sub)
@@ -317,11 +316,9 @@ def generar_recibo_pdf(
   )
   story.append(Spacer(1, 15))
 
-  # Folio y fecha
   story.append(Paragraph(f"<b>{comprobante_id}</b>", style_title_recibo))
   story.append(Spacer(1, 10))
 
-  # Datos generales
   datos_tabla = [
       [
           Paragraph("<b>Fecha de Pago:</b>", style_bold),
@@ -347,7 +344,6 @@ def generar_recibo_pdf(
   story.append(t_info)
   story.append(Spacer(1, 15))
 
-  # Desglose Financiero
   desglose_tabla = [
       [
           Paragraph("<b>Concepto / Detalle</b>", style_bold),
@@ -382,22 +378,23 @@ def generar_recibo_pdf(
       ])
   )
   story.append(t_desglose)
-  story.append(Spacer(1, 40))
+  story.append(Spacer(1, 50))
 
-  # Sección de Firmas
+  # Sección de Firmas corregida sin errores de marcado XML/HTML interno
   firmas_tabla = [
       [
-          Paragraph(
-              "___________________________<br><b>Firma Entregado (Socio)</b>",
-              style_sub,
-          ),
-          Paragraph(
-              "___________________________<br><b>Firma Recibido (Caja)</b>",
-              style_sub,
-          ),
-      ]
+          Paragraph("_______________________________", style_sub),
+          Paragraph("_______________________________", style_sub),
+      ],
+      [
+          Paragraph("<b>Firma Entregado (Socio)</b>", style_sub),
+          Paragraph("<b>Firma Recibido (Caja)</b>", style_sub),
+      ],
   ]
   t_firmas = Table(firmas_tabla, colWidths=[250, 250])
+  t_firmas.setStyle(
+      TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"), ("TOPPADDING", (0, 1), (-1, 1), 4)])
+  )
   story.append(t_firmas)
 
   doc.build(story)
@@ -2255,7 +2252,6 @@ elif opcion == "📅 Cierre Mensual y Anual":
     )
 
   with tab2:
-    st.subheader("⚠️ Cerrar Año Lectivo y Reiniciar Ciclo")
     st.warning(
         "Al ejecutar el Cierre Anual, se registrará el resumen en el"
         " historial. Los saldos de ahorro, pagos y préstamos se reiniciarán"
