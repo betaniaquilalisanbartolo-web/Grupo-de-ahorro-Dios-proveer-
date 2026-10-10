@@ -7,6 +7,12 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
+# ReportLab para la generación del Recibo en PDF
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
 # ==========================================
 # 1. CONFIGURACIÓN DE PÁGINA
 # ==========================================
@@ -231,6 +237,174 @@ def to_excel(df: pd.DataFrame) -> bytes:
   return salida.getvalue()
 
 
+def generar_recibo_pdf(
+    comprobante_id: str,
+    fecha: str,
+    socio: str,
+    prestamo_ref: str,
+    monto_total: float,
+    monto_capital: float,
+    monto_interes: float,
+    capital_pendiente: float,
+) -> bytes:
+  """Genera un archivo PDF elegante del recibo oficial de pago usando ReportLab."""
+  buffer = io.BytesIO()
+  doc = SimpleDocTemplate(
+      buffer,
+      pagesize=letter,
+      rightMargin=40,
+      leftMargin=40,
+      topMargin=40,
+      bottomMargin=40,
+  )
+  styles = getSampleStyleSheet()
+
+  style_header = ParagraphStyle(
+      "HeaderStyle",
+      parent=styles["Heading1"],
+      fontName="Helvetica-Bold",
+      fontSize=18,
+      leading=22,
+      textColor=colors.HexColor("#1A365D"),
+      alignment=1,  # Centrado
+  )
+
+  style_sub = ParagraphStyle(
+      "SubStyle",
+      parent=styles["Normal"],
+      fontName="Helvetica",
+      fontSize=11,
+      leading=14,
+      textColor=colors.HexColor("#4A5568"),
+      alignment=1,
+  )
+
+  style_title_recibo = ParagraphStyle(
+      "ReciboTitle",
+      parent=styles["Heading2"],
+      fontName="Helvetica-Bold",
+      fontSize=14,
+      leading=18,
+      textColor=colors.HexColor("#2B6CB0"),
+      alignment=1,
+  )
+
+  style_body = ParagraphStyle(
+      "BodyStyle",
+      parent=styles["Normal"],
+      fontName="Helvetica",
+      fontSize=10,
+      leading=14,
+      textColor=colors.HexColor("#2D3748"),
+  )
+
+  style_bold = ParagraphStyle(
+      "BoldStyle", parent=style_body, fontName="Helvetica-Bold"
+  )
+
+  story = []
+
+  # Encabezado principal
+  story.append(Paragraph("<b>CAJA DE AHORRO COMUNITARIO</b>", style_header))
+  story.append(
+      Paragraph("Comprobante Oficial de Pago de Préstamo", style_sub)
+  )
+  story.append(Spacer(1, 10))
+  story.append(
+      HRFlowable(
+          width="100%", thickness=1.5, color=colors.HexColor("#2B6CB0")
+      )
+  )
+  story.append(Spacer(1, 15))
+
+  # Folio y fecha
+  story.append(Paragraph(f"<b>{comprobante_id}</b>", style_title_recibo))
+  story.append(Spacer(1, 10))
+
+  # Datos generales
+  datos_tabla = [
+      [
+          Paragraph("<b>Fecha de Pago:</b>", style_bold),
+          Paragraph(str(fecha), style_body),
+      ],
+      [
+          Paragraph("<b>Socio / Beneficiario:</b>", style_bold),
+          Paragraph(str(socio), style_body),
+      ],
+      [
+          Paragraph("<b>Referencia:</b>", style_bold),
+          Paragraph(str(prestamo_ref), style_body),
+      ],
+  ]
+
+  t_info = Table(datos_tabla, colWidths=[150, 350])
+  t_info.setStyle(
+      TableStyle([
+          ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+          ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+      ])
+  )
+  story.append(t_info)
+  story.append(Spacer(1, 15))
+
+  # Desglose Financiero
+  desglose_tabla = [
+      [
+          Paragraph("<b>Concepto / Detalle</b>", style_bold),
+          Paragraph("<b>Monto (C$)</b>", style_bold),
+      ],
+      [
+          Paragraph("Abono Aplicado a Capital", style_body),
+          Paragraph(f"C$ {monto_capital:,.2f}", style_body),
+      ],
+      [
+          Paragraph("Pago de Interés Mensual", style_body),
+          Paragraph(f"C$ {monto_interes:,.2f}", style_body),
+      ],
+      [
+          Paragraph("<b>TOTAL RECIBIDO</b>", style_bold),
+          Paragraph(f"<b>C$ {monto_total:,.2f}</b>", style_bold),
+      ],
+      [
+          Paragraph("Saldo Capital Pendiente", style_body),
+          Paragraph(f"C$ {capital_pendiente:,.2f}", style_body),
+      ],
+  ]
+
+  t_desglose = Table(desglose_tabla, colWidths=[320, 180])
+  t_desglose.setStyle(
+      TableStyle([
+          ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+          ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1A202C")),
+          ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
+          ("PADDING", (0, 0), (-1, -1), 8),
+          ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#EDF2F7")),
+      ])
+  )
+  story.append(t_desglose)
+  story.append(Spacer(1, 40))
+
+  # Sección de Firmas
+  firmas_tabla = [
+      [
+          Paragraph(
+              "___________________________<br><b>Firma Entregado (Socio)</b>",
+              style_sub,
+          ),
+          Paragraph(
+              "___________________________<br><b>Firma Recibido (Caja)</b>",
+              style_sub,
+          ),
+      ]
+  ]
+  t_firmas = Table(firmas_tabla, colWidths=[250, 250])
+  story.append(t_firmas)
+
+  doc.build(story)
+  buffer.seek(0)
+  return buffer.getvalue()
+
+
 def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
   salida = io.BytesIO()
   with motor.connect() as conn:
@@ -448,7 +622,7 @@ if opcion == "📊 Panel General":
     )
 
   col1, col2, col3, col4, col5 = st.columns(5)
-  col1.metric("µ Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
+  col1.metric("💰 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
   col2.metric("📉 Capital Prestado Activo", f"C$ {total_prestado:,.2f}")
   col3.metric("📥 Cobros/Abonos Totales", f"C$ {total_recaudado:,.2f}")
   col4.metric("💸 Egresos / Gastos", f"C$ {total_egresos:,.2f}")
@@ -1037,7 +1211,7 @@ elif opcion == "🤝 Préstamos":
         )
 
         col_r1, col_r2, col_r3, col_r4 = st.columns(4)
-        col_r1.metric("µ Total Capital Prestado", f"C$ {m_cap:,.2f}")
+        col_r1.metric("💰 Total Capital Prestado", f"C$ {m_cap:,.2f}")
         col_r2.metric(
             "📈 Interés Mensual Esperado",
             f"C$ {m_int_mensual_esperado:,.2f}",
@@ -1207,7 +1381,7 @@ elif opcion == "🧮 Simulador de Préstamos":
 
     c1, c2, c3 = st.columns(3)
     c1.metric("📊 Interés Total", f"C$ {int_total:,.2f}")
-    c2.metric("µ Total a Pagar", f"C$ {monto_total:,.2f}")
+    c2.metric("💰 Total a Pagar", f"C$ {monto_total:,.2f}")
     c3.metric("📅 Cuota Mensual Fija", f"C$ {cuota_mensual:,.2f}")
 
     cronograma = []
@@ -1246,7 +1420,7 @@ elif opcion == "🧮 Simulador de Préstamos":
 
     c1, c2, c3 = st.columns(3)
     c1.metric("📊 Interés Total Estimado", f"C$ {tot_int:,.2f}")
-    c2.metric("µ Total a Pagar", f"C$ {(sim_monto + tot_int):,.2f}")
+    c2.metric("💰 Total a Pagar", f"C$ {(sim_monto + tot_int):,.2f}")
     c3.metric("📅 Cuota Mensual Fija", f"C$ {cuota:,.2f}")
 
     st.dataframe(pd.DataFrame(cronograma), use_container_width=True)
@@ -1329,7 +1503,7 @@ elif opcion == "📖 Pagos de Préstamos":
           monto_sugerido = max(0.0, capital_pendiente)
 
         st.caption(
-            "ðŸ¡ **Capital pendiente actual de este préstamo:** C$"
+            "💡 **Capital pendiente actual de este préstamo:** C$"
             f" {capital_pendiente:,.2f}"
         )
 
@@ -1431,28 +1605,39 @@ elif opcion == "📖 Pagos de Préstamos":
         )
 
         st.markdown("---")
-        st.subheader("🧾 Recibo Oficial de Pago Generado")
-        df_recibo = pd.DataFrame([{
-            "ID Comprobante": f"REC-{pago_id_nuevo:05d}",
-            "Fecha Pago": str(fecha_pago),
+        st.subheader("🧾 Recibo Oficial de Pago Generado (PDF)")
+
+        comprobante_code = f"REC-{pago_id_nuevo:05d}"
+        pdf_bytes = generar_recibo_pdf(
+            comprobante_id=comprobante_code,
+            fecha=str(fecha_pago),
+            socio=datos_p["socio_nombre"],
+            prestamo_ref=f"Préstamo #{p_id}",
+            monto_total=monto_pago,
+            monto_capital=m_capital,
+            monto_interes=m_interes,
+            capital_pendiente=capital_restante_despues,
+        )
+
+        df_recibo_preview = pd.DataFrame([{
+            "Comprobante": comprobante_code,
+            "Fecha": str(fecha_pago),
             "Socio": datos_p["socio_nombre"],
-            "Préstamo Ref.": f"Préstamo #{p_id}",
-            "Monto Pagado": f"C$ {monto_pago:,.2f}",
-            "Abono Capital": f"C$ {m_capital:,.2f}",
-            "Abono Interés": f"C$ {m_interes:,.2f}",
-            "Capital Pendiente": f"C$ {capital_restante_despues:,.2f}",
+            "Monto Total": f"C$ {monto_pago:,.2f}",
+            "Capital": f"C$ {m_capital:,.2f}",
+            "Interés": f"C$ {m_interes:,.2f}",
+            "Saldo Pendiente": f"C$ {capital_restante_despues:,.2f}",
         }])
-        st.dataframe(df_recibo, use_container_width=True)
+        st.dataframe(df_recibo_preview, use_container_width=True)
+
         st.download_button(
-            label="📄 Descargar Recibo Oficial (Excel)",
-            data=to_excel(df_recibo),
+            label="📄 Descargar Recibo Oficial (PDF)",
+            data=pdf_bytes,
             file_name=(
-                f"recibo_pago_{pago_id_nuevo}_"
-                f"{datetime.now().strftime('%Y%m%d')}.xlsx"
+                f"recibo_{pago_id_nuevo}_"
+                f"{datetime.now().strftime('%Y%m%d')}.pdf"
             ),
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            mime="application/pdf",
         )
 
   with tab2:
@@ -1695,7 +1880,7 @@ elif opcion == "📜 Estado de Cuenta":
     )
 
     c1, c2 = st.columns(2)
-    c1.metric("µ Capital Total Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
+    c1.metric("💰 Capital Total Ahorrado", f"C$ {total_ahorrado_socio:,.2f}")
     c2.metric(
         "📉 Préstamos Activos (Capital Pendiente)",
         f"C$ {total_prestado_socio:,.2f}",
@@ -1864,7 +2049,7 @@ elif opcion == "🎉 Liquidación Anual":
   utilidad_neta = total_intereses_ganados - total_gastos
 
   c1, c2, c3, c4 = st.columns(4)
-  c1.metric("µ Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
+  c1.metric("💰 Fondo Total Ahorrado", f"C$ {gran_total_ahorrado:,.2f}")
   c2.metric("📈 Intereses Ganados", f"C$ {total_intereses_ganados:,.2f}")
   c3.metric("💸 Egresos de Caja", f"C$ {total_gastos:,.2f}")
   c4.metric("🏦 Utilidad Neta a Repartir", f"C$ {utilidad_neta:,.2f}")
@@ -2060,7 +2245,7 @@ elif opcion == "📅 Cierre Mensual y Anual":
       )
 
     st.metric(
-        f"µ Ahorros del Mes ({mes_sel}/{anio_sel})",
+        f"💰 Ahorros del Mes ({mes_sel}/{anio_sel})",
         f"C$ {tot_ahorro_m:,.2f}",
     )
     st.metric(
