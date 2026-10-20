@@ -915,784 +915,103 @@ elif opcion == "💵 Ahorros y Cuotas":
                         },
                     )
                 registrar_bitacora(
-                    f"Depósito de ahorro C$ {monto_ahorro} registrado para"
-                    f" socio {socio_nom}"
+                    f"Ahorro de C$ {monto_ahorro:,.2f} registrado para"
+                    f" {socio_nom}"
                 )
                 st.success(
-                    f"Ahorro de C$ {monto_ahorro:,.2f} registrado para"
-                    f" {socio_nom}."
+                    f"¡Ahorro de C$ {monto_ahorro:,.2f} registrado para"
+                    f" {socio_nom}!"
                 )
                 st.rerun()
 
         with tab2:
-            st.subheader("Historial General de Aportaciones")
-            query_ahorros = """
-                SELECT a.id as "ID", s.nombre as "Socio", a.monto as "Monto (C$)", a.fecha as "Fecha", a.nota as "Nota"
-                FROM ahorros a
-                JOIN socios s ON a.socio_id = s.id
-                ORDER BY a.fecha DESC, a.id DESC
-                """
+            st.subheader("Historial de Ahorros")
             with motor.connect() as conn:
-                df_hist_ahorros = pd.read_sql(text(query_ahorros), conn)
-            st.dataframe(df_hist_ahorros, use_container_width=True)
-            if not df_hist_ahorros.empty:
-                st.download_button(
-                    label="📥 Exportar Ahorros a Excel",
-                    data=to_excel(df_hist_ahorros),
-                    file_name=(
-                        f"reporte_ahorros_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                    ),
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    ),
+                df_ahorros_hist = pd.read_sql(
+                    text("""
+                    SELECT a.id, s.nombre as socio, a.monto, a.fecha, a.nota
+                    FROM ahorros a
+                    JOIN socios s ON a.socio_id = s.id
+                    ORDER BY a.fecha DESC
+                    """),
+                    conn,
                 )
+            if not df_ahorros_hist.empty:
+                st.dataframe(df_ahorros_hist, use_container_width=True)
+            else:
+                st.info("No hay registros de ahorros.")
 
         with tab3:
-            st.subheader("Corregir o Eliminar Registro de Ahorro")
-            query_edit_a = """
-                SELECT a.id, s.nombre || ' - C$' || a.monto || ' (' || a.fecha || ')' as label, a.socio_id, a.monto, a.fecha, a.nota
-                FROM ahorros a
-                JOIN socios s ON a.socio_id = s.id
-                ORDER BY a.id DESC
-                """
+            st.subheader("Editar / Eliminar Ahorro")
             with motor.connect() as conn:
-                df_edit_a = pd.read_sql(text(query_edit_a), conn)
-
-            if df_edit_a.empty:
-                st.info("No hay registros de ahorro para modificar.")
-            else:
-                dict_edit_a = dict(zip(df_edit_a["label"], df_edit_a["id"]))
-                ahorro_sel = st.selectbox(
-                    "Selecciona el depósito a editar:", list(dict_edit_a.keys())
+                df_a_edit = pd.read_sql(
+                    text("""
+                    SELECT a.id, s.nombre as socio, a.monto, a.fecha, a.nota, a.socio_id
+                    FROM ahorros a
+                    JOIN socios s ON a.socio_id = s.id
+                    ORDER BY a.id DESC
+                    """),
+                    conn,
                 )
-                id_a_sel = dict_edit_a[ahorro_sel]
-                reg_a = df_edit_a[df_edit_a["id"] == id_a_sel].iloc[0]
+            if df_a_edit.empty:
+                st.info("No hay depósitos registrados para modificar.")
+            else:
+                dict_a = {
+                    f"ID #{row['id']} - {row['socio']} (C$ {row['monto']:,.2f} - {row['fecha']})": row[
+                        "id"
+                    ]
+                    for _, row in df_a_edit.iterrows()
+                }
+                ahorro_sel = st.selectbox("Selecciona Registro:", list(dict_a.keys()))
+                id_ahorro_sel = dict_a[ahorro_sel]
+                datos_a = df_a_edit[df_a_edit["id"] == id_ahorro_sel].iloc[0]
 
                 with st.form("form_edit_ahorro"):
-                    socio_idx = (
-                        list(dict_socios.values()).index(reg_a["socio_id"])
-                        if reg_a["socio_id"] in dict_socios.values()
-                        else 0
-                    )
-                    e_socio_nom = st.selectbox(
-                        "Socio", list(dict_socios.keys()), index=socio_idx
-                    )
-                    e_monto = st.number_input(
+                    m_monto = st.number_input(
                         "Monto (C$)",
-                        value=float(reg_a["monto"]),
+                        value=float(datos_a["monto"]),
                         min_value=1.0,
-                        step=10.0,
                     )
-                    f_a_orig = pd.to_datetime(reg_a["fecha"]).date()
-                    e_fecha = st.date_input("Fecha", value=f_a_orig)
-                    e_nota = st.text_input("Nota", value=reg_a["nota"] or "")
+                    m_fecha = st.date_input(
+                        "Fecha",
+                        value=pd.to_datetime(datos_a["fecha"]).date(),
+                    )
+                    m_nota = st.text_input("Nota", value=datos_a["nota"] or "")
 
-                    col_btn1, col_btn2 = st.columns(2)
-                    with col_btn1:
-                        btn_update_a = st.form_submit_button("💾 Guardar Cambios")
-                    with col_btn2:
-                        btn_delete_a = st.form_submit_button("🗑️ Eliminar Registro")
+                    col_ea1, col_ea2 = st.columns(2)
+                    with col_ea1:
+                        btn_up_a = st.form_submit_button("💾 Guardar Cambios")
+                    with col_ea2:
+                        btn_del_a = st.form_submit_button("🗑️ Eliminar Registro")
 
-                    if btn_update_a:
+                    if btn_up_a:
                         with motor.begin() as conn:
                             conn.execute(
                                 text(
-                                    "UPDATE ahorros SET socio_id = :socio_id,"
-                                    " monto = :monto, fecha = :fecha, nota ="
-                                    " :nota WHERE id = :id"
+                                    "UPDATE ahorros SET monto = :monto, fecha ="
+                                    " :fecha, nota = :nota WHERE id = :id"
                                 ),
                                 {
-                                    "socio_id": dict_socios[e_socio_nom],
-                                    "monto": e_monto,
-                                    "fecha": str(e_fecha),
-                                    "nota": e_nota,
-                                    "id": id_a_sel,
+                                    "monto": m_monto,
+                                    "fecha": str(m_fecha),
+                                    "nota": m_nota,
+                                    "id": id_ahorro_sel,
                                 },
                             )
                         registrar_bitacora(
-                            f"Actualización de depósito de ahorro ID {id_a_sel}"
+                            f"Actualización de ahorro ID {id_ahorro_sel}"
                         )
-                        st.success("¡Depósito actualizado correctamente!")
+                        st.success("¡Registro de ahorro actualizado!")
                         st.rerun()
 
-                    if btn_delete_a:
+                    if btn_del_a:
                         with motor.begin() as conn:
                             conn.execute(
                                 text("DELETE FROM ahorros WHERE id = :id"),
-                                {"id": id_a_sel},
+                                {"id": id_ahorro_sel},
                             )
                         registrar_bitacora(
-                            f"Eliminación de depósito de ahorro ID {id_a_sel}"
+                            f"Eliminación de ahorro ID {id_ahorro_sel}"
                         )
                         st.warning("Registro de ahorro eliminado.")
                         st.rerun()
-
-# ==========================================
-# SECCIÓN 4: PRÉSTAMOS
-# ==========================================
-elif opcion == "🤝 Préstamos":
-    st.title("🤝 Módulo de Préstamos")
-    with motor.connect() as conn:
-        df_socios = pd.read_sql(
-            text(
-                "SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY"
-                " nombre ASC"
-            ),
-            conn,
-        )
-
-    if df_socios.empty:
-        st.warning("Primero debes registrar socios en la sección '👥 Socios'.")
-    else:
-        tab1, tab2, tab3 = st.tabs(
-            [
-                "➕ Otorgar Préstamo",
-                "📋 Listado de Préstamos",
-                "✏️ Editar / Administrar Préstamo",
-            ]
-        )
-        dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
-
-        with tab1:
-            st.subheader("Otorgar Nuevo Préstamo")
-            with st.form("form_prestamo", clear_on_submit=True):
-                socio_nom = st.selectbox(
-                    "Socio Solicitante *", list(dict_socios.keys())
-                )
-                monto_prestado = st.number_input(
-                    "Monto Solicitado (C$) *", min_value=100.0, step=500.0, value=10000.0
-                )
-                tasa_interes = st.number_input(
-                    "Tasa de Interés Mensual (%) *", min_value=0.0, step=0.5, value=5.0
-                )
-                plazo_meses = st.number_input(
-                    "Plazo (Meses) *", min_value=1, step=1, value=6
-                )
-                fecha_inicio = st.date_input("Fecha de Desembolso", datetime.now())
-                btn_prestamo = st.form_submit_button("Desembolsar Préstamo")
-
-            if btn_prestamo:
-                socio_id = dict_socios[socio_nom]
-                interes_total = (
-                    monto_prestado * (tasa_interes / 100.0) * plazo_meses
-                )
-                monto_total = monto_prestado + interes_total
-                anio_curr = fecha_inicio.year
-
-                with motor.begin() as conn:
-                    conn.execute(
-                        text(
-                            "INSERT INTO prestamos (socio_id, monto_prestado,"
-                            " tasa_interes, plazo_meses, interes_total,"
-                            " monto_total, fecha_inicio, anio) VALUES"
-                            " (:socio_id, :monto_prestado, :tasa_interes,"
-                            " :plazo_meses, :interes_total, :monto_total,"
-                            " :fecha_inicio, :anio)"
-                        ),
-                        {
-                            "socio_id": socio_id,
-                            "monto_prestado": monto_prestado,
-                            "tasa_interes": tasa_interes,
-                            "plazo_meses": int(plazo_meses),
-                            "interes_total": interes_total,
-                            "monto_total": monto_total,
-                            "fecha_inicio": str(fecha_inicio),
-                            "anio": anio_curr,
-                        },
-                    )
-                registrar_bitacora(
-                    f"Préstamo de C$ {monto_prestado:,.2f} otorgado a {socio_nom}"
-                )
-                st.success(
-                    f"¡Préstamo registrado con éxito para {socio_nom} por C$"
-                    f" {monto_prestado:,.2f}!"
-                )
-                st.rerun()
-
-        with tab2:
-            st.subheader("Historial de Préstamos Registrados")
-            query_prestamos = """
-                SELECT p.id as "ID", s.nombre as "Socio", p.monto_prestado as "Monto (C$)", 
-                       p.tasa_interes as "Tasa (%)", p.plazo_meses as "Plazo (Meses)", 
-                       p.interes_total as "Interés Total (C$)", p.monto_total as "Total a Pagar (C$)", 
-                       p.fecha_inicio as "Fecha Inicio", p.estado as "Estado"
-                FROM prestamos p
-                JOIN socios s ON p.socio_id = s.id
-                ORDER BY p.id DESC
-                """
-            with motor.connect() as conn:
-                df_hist_p = pd.read_sql(text(query_prestamos), conn)
-            st.dataframe(df_hist_p, use_container_width=True)
-            if not df_hist_p.empty:
-                st.download_button(
-                    label="📥 Exportar Préstamos a Excel",
-                    data=to_excel(df_hist_p),
-                    file_name=(
-                        f"reporte_prestamos_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                    ),
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    ),
-                )
-
-        with tab3:
-            st.subheader("Administrar o Cambiar Estado de Préstamo")
-            with motor.connect() as conn:
-                df_p_admin = pd.read_sql(
-                    text(
-                        "SELECT p.id, s.nombre || ' - Préstamo #' || p.id || ' (C$' || p.monto_prestado || ')' as label, p.estado FROM prestamos p JOIN socios s ON p.socio_id = s.id ORDER BY p.id DESC"
-                    ),
-                    conn,
-                )
-
-            if df_p_admin.empty:
-                st.info("No hay préstamos para administrar.")
-            else:
-                dict_p_admin = dict(zip(df_p_admin["label"], df_p_admin["id"]))
-                p_sel_lbl = st.selectbox(
-                    "Selecciona el Préstamo:", list(dict_p_admin.keys())
-                )
-                id_p_sel = dict_p_admin[p_sel_lbl]
-                estado_actual = df_p_admin[df_p_admin["id"] == id_p_sel].iloc[0][
-                    "estado"
-                ]
-
-                with st.form("form_admin_prestamo"):
-                    nuevo_estado = st.selectbox(
-                        "Cambiar Estado del Préstamo",
-                        ["Activo", "Saldado", "Cancelado"],
-                        index=0 if estado_actual == "Activo" else (1 if estado_actual == "Saldado" else 2),
-                    )
-                    btn_up_p = st.form_submit_button("Actualizar Estado")
-
-                    if btn_up_p:
-                        with motor.begin() as conn:
-                            conn.execute(
-                                text(
-                                    "UPDATE prestamos SET estado = :est WHERE id = :id"
-                                ),
-                                {"est": nuevo_estado, "id": id_p_sel},
-                            )
-                        registrar_bitacora(
-                            f"Estado del préstamo #{id_p_sel} cambiado a '{nuevo_estado}'"
-                        )
-                        st.success(
-                            f"¡Estado del préstamo #{id_p_sel} actualizado a"
-                            f" '{nuevo_estado}'!"
-                        )
-                        st.rerun()
-
-# ==========================================
-# SECCIÓN 5: SIMULADOR DE PRÉSTAMOS
-# ==========================================
-elif opcion == "🧮 Simulador de Préstamos":
-    st.title("🧮 Simulador Financiero de Préstamos")
-    st.markdown(
-        "Calcula las cuotas, intereses y el plan de pagos estimado antes de"
-        " otorgar un crédito."
-    )
-
-    col_s1, col_s2, col_s3 = st.columns(3)
-    with col_s1:
-        monto_sim = st.number_input(
-            "Monto a Simular (C$)", min_value=100.0, step=500.0, value=20000.0
-        )
-    with col_s2:
-        tasa_sim = st.number_input(
-            "Tasa de Interés Mensual (%)", min_value=0.0, step=0.5, value=5.0
-        )
-    with col_s3:
-        plazo_sim = st.number_input(
-            "Plazo en Meses", min_value=1, step=1, value=6
-        )
-
-    interes_mensual_calc = monto_sim * (tasa_sim / 100.0)
-    interes_total_calc = interes_mensual_calc * plazo_sim
-    monto_total_calc = monto_sim + interes_total_calc
-    cuota_mensual_calc = monto_total_calc / plazo_sim
-
-    st.markdown("---")
-    res_c1, res_c2, res_c3 = st.columns(3)
-    res_c1.metric("💵 Interés Mensual Fijo", f"C$ {interes_mensual_calc:,.2f}")
-    res_c2.metric("📈 Interés Total del Plazo", f"C$ {interes_total_calc:,.2f}")
-    res_c3.metric("💳 Cuota Total Sugerida", f"C$ {cuota_mensual_calc:,.2f}")
-
-    with st.expander("📅 Ver Tabla de Amortización Teórica"):
-        tabla_amort = []
-        cap_pendiente = monto_sim
-        amort_mensual = monto_sim / plazo_sim
-        for mes in range(1, int(plazo_sim) + 1):
-            tabla_amort.append({
-                "Mes": mes,
-                "Capital a Pagar (C$)": round(amort_mensual, 2),
-                "Interés (C$)": round(interes_mensual_calc, 2),
-                "Cuota Total (C$)": round(amort_mensual + interes_mensual_calc, 2),
-                "Capital Pendiente (C$)": round(
-                    max(0.0, cap_pendiente - (amort_mensual * mes)), 2
-                ),
-            })
-        st.dataframe(pd.DataFrame(tabla_amort), use_container_width=True)
-
-# ==========================================
-# SECCIÓN 6: PAGOS DE PRÉSTAMOS (CORREGIDA)
-# ==========================================
-elif opcion == "📖 Pagos de Préstamos":
-    st.title("📖 Registro de Abonos y Pagos")
-    
-    with motor.connect() as conn:
-        df_prestamos_activos = pd.read_sql(
-            text("""
-                SELECT p.id, s.nombre, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.fecha_inicio
-                FROM prestamos p
-                JOIN socios s ON p.socio_id = s.id
-                WHERE p.estado = 'Activo'
-                ORDER BY p.id DESC
-            """), conn
-        )
-
-    if df_prestamos_activos.empty:
-        st.info("No hay préstamos activos para registrar pagos.")
-    else:
-        tab1, tab2, tab3 = st.tabs(
-            [
-                "➕ Registrar Abono",
-                "📜 Historial de Pagos",
-                "✏️ Editar / Borrar Pago",
-            ]
-        )
-
-        dict_prestamos = {
-            f"{row['nombre']} - Préstamo #{row['id']} (C${row['monto_prestado']} capital)": row['id']
-            for _, row in df_prestamos_activos.iterrows()
-        }
-
-        with tab1:
-            st.subheader("Registrar Nuevo Pago o Abono")
-            prestamo_sel_label = st.selectbox("Selecciona el Préstamo *", list(dict_prestamos.keys()))
-            prestamo_id_sel = dict_prestamos[prestamo_sel_label]
-
-            with motor.connect() as conn:
-                p_info = df_prestamos_activos[df_prestamos_activos['id'] == prestamo_id_sel].iloc[0]
-                df_pagos_prestamo = pd.read_sql(
-                    text("SELECT COALESCE(SUM(monto_capital), 0) as total_capital FROM pagos WHERE prestamo_id = :pid"),
-                    conn, params={"pid": prestamo_id_sel}
-                )
-                capital_pagado_hist = float(df_pagos_prestamo['total_capital'].iloc[0])
-                capital_pendiente = float(p_info['monto_prestado']) - capital_pagado_hist
-
-            st.info(f"💡 Capital pendiente actual de este préstamo: **C$ {capital_pendiente:,.2f}**")
-
-            with st.form("form_registro_pago"):
-                tipo_abono = st.selectbox(
-                    "Tipo de Abono *",
-                    ["Completo (Cuota Mensual)", "Solo Interés", "Abono a Capital", "Cancelación Total Anticipada"]
-                )
-                
-                # Monto completamente editable sin restricciones automáticas que alteren el valor
-                monto_ingresado = st.number_input(
-                    "Monto del Pago/Abono (C$) *",
-                    min_value=1.0,
-                    value=float(capital_pendiente) if tipo_abono == "Cancelación Total Anticipada" else 100.0,
-                    step=100.0,
-                    format="%.2f"
-                )
-                
-                fecha_pago = st.date_input("Fecha del Pago", datetime.now())
-                btn_registrar_pago = st.form_submit_button("Registrar Pago")
-
-            if btn_registrar_pago:
-                monto_capital = 0.0
-                monto_interes = 0.0
-                saldar_prestamo = False
-
-                if tipo_abono == "Cancelación Total Anticipada":
-                    monto_capital = capital_pendiente
-                    monto_interes = max(0.0, monto_ingresado - monto_capital)
-                    monto_pagado_final = monto_capital + monto_interes
-                    saldar_prestamo = True
-                elif tipo_abono == "Abono a Capital":
-                    monto_capital = monto_ingresado
-                    monto_interes = 0.0
-                    monto_pagado_final = monto_capital
-                elif tipo_abono == "Solo Interés":
-                    monto_capital = 0.0
-                    monto_interes = monto_ingresado
-                    monto_pagado_final = monto_interes
-                else:  # Completo (Cuota Mensual)
-                    monto_capital = min(monto_ingresado, capital_pendiente)
-                    monto_interes = max(0.0, monto_ingresado - monto_capital)
-                    monto_pagado_final = monto_ingresado
-                    if capital_pendiente - monto_capital <= 0:
-                        saldar_prestamo = True
-
-                with motor.begin() as conn:
-                    conn.execute(
-                        text("""
-                            INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
-                            VALUES (:pid, :mpag, :mcap, :mint, :fec, :tip)
-                        """),
-                        {
-                            "pid": prestamo_id_sel,
-                            "mpag": monto_pagado_final,
-                            "mcap": monto_capital,
-                            "mint": monto_interes,
-                            "fec": str(fecha_pago),
-                            "tip": tipo_abono
-                        }
-                    )
-
-                    if saldar_prestamo or (capital_pendiente - monto_capital <= 0):
-                        conn.execute(
-                            text("UPDATE prestamos SET estado = 'Saldado' WHERE id = :pid"),
-                            {"pid": prestamo_id_sel}
-                        )
-
-                registrar_bitacora(f"Pago registrado de C$ {monto_pagado_final:,.2f} para préstamo #{prestamo_id_sel}")
-                st.success(f"¡Abono registrado con éxito! C$ {monto_capital:,.2f} a Capital y C$ {monto_interes:,.2f} a Interés.")
-                st.rerun()
-
-        with tab2:
-            st.subheader("Historial de Pagos Recibidos")
-            query_hist_pagos = """
-                SELECT pg.id as "ID", p.id as "Préstamo #", s.nombre as "Socio", 
-                       pg.monto_pagado as "Monto Pagado (C$)", pg.monto_capital as "Capital (C$)", 
-                       pg.monto_interes as "Interés (C$)", pg.fecha as "Fecha", pg.tipo as "Tipo"
-                FROM pagos pg
-                JOIN prestamos p ON pg.prestamo_id = p.id
-                JOIN socios s ON p.socio_id = s.id
-                ORDER BY pg.fecha DESC, pg.id DESC
-                """
-            with motor.connect() as conn:
-                df_hist_pagos = pd.read_sql(text(query_hist_pagos), conn)
-            st.dataframe(df_hist_pagos, use_container_width=True)
-            if not df_hist_pagos.empty:
-                st.download_button(
-                    label="📥 Exportar Pagos a Excel",
-                    data=to_excel(df_hist_pagos),
-                    file_name=(
-                        f"reporte_pagos_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                    ),
-                    mime=(
-                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    ),
-                )
-
-        with tab3:
-            st.subheader("Modificar o Eliminar un Pago")
-            with motor.connect() as conn:
-                df_edit_p = pd.read_sql(
-                    text("""
-                        SELECT pg.id, s.nombre || ' - Pág #' || pg.id || ' (C$' || pg.monto_pagado || ')' as label
-                        FROM pagos pg
-                        JOIN prestamos p ON pg.prestamo_id = p.id
-                        JOIN socios s ON p.socio_id = s.id
-                        ORDER BY pg.id DESC
-                    """), conn
-                )
-
-            if df_edit_p.empty:
-                st.info("No hay pagos registrados para editar.")
-            else:
-                dict_edit_p = dict(zip(df_edit_p["label"], df_edit_p["id"]))
-                pago_sel_lbl = st.selectbox("Selecciona el Pago:", list(dict_edit_p.keys()))
-                id_pago_sel = dict_edit_p[pago_sel_lbl]
-
-                with st.form("form_del_pago"):
-                    st.warning("⚠️ Si eliminas un pago, el capital pendiente del préstamo se recalculará automáticamente.")
-                    btn_borrar_pago = st.form_submit_button("🗑️ Eliminar este Pago")
-
-                    if btn_borrar_pago:
-                        with motor.begin() as conn:
-                            # Obtener prestamo_id antes de borrar
-                            res_pid = conn.execute(
-                                text("SELECT prestamo_id FROM pagos WHERE id = :id"),
-                                {"id": id_pago_sel}
-                            ).fetchone()
-                            
-                            conn.execute(
-                                text("DELETE FROM pagos WHERE id = :id"),
-                                {"id": id_pago_sel}
-                            )
-
-                            if res_pid:
-                                # Si el préstamo estaba saldado, volver a pasarlo a 'Activo' por si se elimina el pago de cancelación
-                                conn.execute(
-                                    text("UPDATE prestamos SET estado = 'Activo' WHERE id = :pid"),
-                                    {"pid": res_pid[0]}
-                                )
-
-                        registrar_bitacora(f"Eliminación del pago ID {id_pago_sel}")
-                        st.success("¡Pago eliminado correctamente y estado del préstamo recalculado!")
-                        st.rerun()
-
-# ==========================================
-# SECCIÓN 7: EGRESOS Y GASTOS
-# ==========================================
-elif opcion == "💸 Egresos y Gastos":
-    st.title("💸 Control de Egresos y Gastos Operativos")
-    tab1, tab2 = st.tabs(["➕ Registrar Egreso", "📜 Historial de Egresos"])
-
-    with tab1:
-        with st.form("form_egreso", clear_on_submit=True):
-            concepto = st.text_input("Concepto del Gasto *")
-            monto_egreso = st.number_input("Monto (C$) *", min_value=1.0, step=10.0)
-            fecha_egreso = st.date_input("Fecha del Gasto", datetime.now())
-            responsable = st.text_input("Responsable / Autorizado por")
-            btn_egreso = st.form_submit_button("Guardar Egreso")
-
-        if btn_egreso:
-            if concepto.strip() == "":
-                st.error("El concepto del egreso es obligatorio.")
-            else:
-                with motor.begin() as conn:
-                    conn.execute(
-                        text(
-                            "INSERT INTO egresos (concepto, monto, fecha,"
-                            " responsable) VALUES (:concepto, :monto, :fecha,"
-                            " :responsable)"
-                        ),
-                        {
-                            "concepto": concepto,
-                            "monto": monto_egreso,
-                            "fecha": str(fecha_egreso),
-                            "responsable": responsable,
-                        },
-                    )
-                registrar_bitacora(f"Egreso registrado: {concepto} por C$ {monto_egreso}")
-                st.success(f"¡Egreso de C$ {monto_egreso:,.2f} registrado con éxito!")
-                st.rerun()
-
-    with tab2:
-        with motor.connect() as conn:
-            df_egresos = pd.read_sql(
-                text(
-                    'SELECT id as "ID", concepto as "Concepto", monto as'
-                    ' "Monto (C$)", fecha as "Fecha", responsable as'
-                    ' "Responsable" FROM egresos ORDER BY fecha DESC'
-                ),
-                conn,
-            )
-        st.dataframe(df_egresos, use_container_width=True)
-        if not df_egresos.empty:
-            st.download_button(
-                label="📥 Exportar Egresos a Excel",
-                data=to_excel(df_egresos),
-                file_name=(
-                    f"reporte_egresos_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                ),
-                mime=(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                ),
-            )
-
-# ==========================================
-# SECCIÓN 8: ESTADO DE CUENTA
-# ==========================================
-elif opcion == "📜 Estado de Cuenta":
-    st.title("📜 Estado de Cuenta por Socio")
-    with motor.connect() as conn:
-        df_socios = pd.read_sql(
-            text("SELECT id, nombre FROM socios ORDER BY nombre ASC"), conn
-        )
-
-    if df_socios.empty:
-        st.info("No hay socios registrados.")
-    else:
-        dict_socios_ec = dict(zip(df_socios["nombre"], df_socios["id"]))
-        socio_sel_ec = st.selectbox(
-            "Selecciona el Socio para ver su Estado de Cuenta:",
-            list(dict_socios_ec.keys()),
-        )
-        id_socio_ec = dict_socios_ec[socio_sel_ec]
-
-        with motor.connect() as conn:
-            df_a_socio = pd.read_sql(
-                text(
-                    'SELECT id as "ID", monto as "Ahorro (C$)", fecha as'
-                    ' "Fecha", nota as "Nota" FROM ahorros WHERE socio_id ='
-                    ' :sid ORDER BY fecha DESC'
-                ),
-                conn,
-                params={"sid": id_socio_ec},
-            )
-            df_p_socio = pd.read_sql(
-                text(
-                    'SELECT id as "Préstamo #", monto_prestado as "Monto (C$)",'
-                    ' tasa_interes as "Tasa (%)", plazo_meses as "Plazo",'
-                    ' monto_total as "Total (C$)", fecha_inicio as "Fecha",'
-                    ' estado as "Estado" FROM prestamos WHERE socio_id = :sid'
-                    ' ORDER BY id DESC'
-                ),
-                conn,
-                params={"sid": id_socio_ec},
-            )
-
-        st.subheader(f"Ahorros de {socio_sel_ec}")
-        st.dataframe(df_a_socio, use_container_width=True)
-        total_ahorros_socio = (
-            df_a_socio["Ahorro (C$)"].sum() if not df_a_socio.empty else 0.0
-        )
-        st.success(f"💰 Total Ahorrado por el Socio: **C$ {total_ahorros_socio:,.2f}**")
-
-        st.markdown("---")
-        st.subheader(f"Préstamos de {socio_sel_ec}")
-        st.dataframe(df_p_socio, use_container_width=True)
-
-# ==========================================
-# SECCIÓN 9: LIQUIDACIÓN ANUAL
-# ==========================================
-elif opcion == "🎉 Liquidación Anual":
-    st.title("🎉 Módulo de Liquidación Anual")
-    st.markdown(
-        "Calcula la distribución de rendimientos y el cierre de fin de año"
-        " para los socios."
-    )
-
-    anio_liq = st.selectbox(
-        "Selecciona el Año de Liquidación:",
-        list(range(datetime.now().year, 2019, -1)),
-    )
-
-    with motor.connect() as conn:
-        df_tot_ahorros = pd.read_sql(
-            text(
-                "SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE"
-                " anio = :anio"
-            ),
-            conn,
-            params={"anio": anio_liq},
-        )
-        total_ahorro_anio = float(df_tot_ahorros["total"].iloc[0])
-
-        df_tot_intereses = pd.read_sql(
-            text(
-                "SELECT COALESCE(SUM(monto_interes), 0) as total FROM pagos pg"
-                " JOIN prestamos p ON pg.prestamo_id = p.id WHERE"
-                " EXTRACT(YEAR FROM pg.fecha) = :anio"
-            ),
-            conn,
-            params={"anio": anio_liq},
-        )
-        total_intereses_anio = float(df_tot_intereses["total"].iloc[0])
-
-    col_l1, col_l2 = st.columns(2)
-    col_l1.metric(
-        f"💰 Total Ahorros ({anio_liq})", f"C$ {total_ahorro_anio:,.2f}"
-    )
-    col_l2.metric(
-        f"📈 Intereses Recaudados ({anio_liq})",
-        f"C$ {total_intereses_anio:,.2f}",
-    )
-
-    st.markdown("---")
-    if st.button("🔒 Procesar y Guardar Cierre de Liquidación Anual"):
-        with motor.begin() as conn:
-            conn.execute(
-                text(
-                    "INSERT INTO cierres_anuales (anio, total_ahorrado,"
-                    " total_intereses) VALUES (:anio, :ta, :ti)"
-                ),
-                {
-                    "anio": anio_liq,
-                    "ta": total_ahorro_anio,
-                    "ti": total_intereses_anio,
-                },
-            )
-        registrar_bitacora(f"Liquidación anual procesada para el año {anio_liq}")
-        st.success(
-            f"¡Liquidación del año {anio_liq} guardada en el historial con"
-            " éxito!"
-        )
-
-# ==========================================
-# SECCIÓN 10: CIERRE MENSUAL Y ANUAL
-# ==========================================
-elif opcion == "📅 Cierre Mensual y Anual":
-    st.title("📅 Módulo de Cierre Mensual y Anual")
-    st.markdown(
-        "Control mensual de caja e historial de liquidaciones cerradas."
-    )
-
-    col_c1, col_c2 = st.columns(2)
-    with col_c1:
-        mes_sel = st.selectbox("Seleccionar Mes", list(range(1, 13)), index=datetime.now().month - 1)
-    with col_c2:
-        anio_sel = st.selectbox(
-            "Seleccionar Año", list(range(2025, 2031)), index=1
-        )
-
-    with motor.connect() as conn:
-        df_ahorros_mes = pd.read_sql(
-            text(
-                "SELECT COALESCE(SUM(monto), 0) as total FROM ahorros WHERE"
-                " EXTRACT(MONTH FROM fecha) = :mes AND EXTRACT(YEAR FROM"
-                " fecha) = :anio"
-            ),
-            conn,
-            params={"mes": mes_sel, "anio": anio_sel},
-        )
-        ahorros_mes = float(df_ahorros_mes["total"].iloc[0])
-
-        df_pagos_mes = pd.read_sql(
-            text(
-                "SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos"
-                " WHERE EXTRACT(MONTH FROM fecha) = :mes AND EXTRACT(YEAR"
-                " FROM fecha) = :anio"
-            ),
-            conn,
-            params={"mes": mes_sel, "anio": anio_sel},
-        )
-        pagos_mes = float(df_pagos_mes["total"].iloc[0])
-
-    st.markdown("### Resumen Mensual")
-    st.metric(f"💰 Ahorros del Mes ({mes_sel}/{anio_sel})", f"C$ {ahorros_mes:,.2f}")
-    st.metric(
-        f"📥 Pagos/Cobros Recibidos en el Mes ({mes_sel}/{anio_sel})",
-        f"C$ {pagos_mes:,.2f}",
-    )
-
-    st.markdown("---")
-    st.subheader("📜 Historial de Cierres Anuales")
-    with motor.connect() as conn:
-        df_cierres = pd.read_sql(
-            text(
-                'SELECT id as "ID", anio as "Año", total_ahorrado as'
-                ' "Total Ahorrado (C$)", total_intereses as "Intereses (C$)",'
-                ' fecha_cierre as "Fecha de Cierre" FROM cierres_anuales'
-                ' ORDER BY anio DESC'
-            ),
-            conn,
-        )
-    st.dataframe(df_cierres, use_container_width=True)
-
-# ==========================================
-# SECCIÓN 11: BITÁCORA DE AUDITORÍA
-# ==========================================
-elif opcion == "🛡️ Bitácora de Auditoría":
-    st.title("🛡️ Bitácora de Auditoría y Seguridad")
-    st.markdown(
-        "Registro de todas las acciones importantes realizadas en el sistema."
-    )
-
-    with motor.connect() as conn:
-        df_bitacora = pd.read_sql(
-            text(
-                'SELECT id as "ID", fecha as "Fecha y Hora", usuario as'
-                ' "Usuario", accion as "Acción Realizada" FROM bitacora ORDER'
-                ' BY fecha DESC LIMIT 100'
-            ),
-            conn,
-        )
-
-    st.dataframe(df_bitacora, use_container_width=True)
-    if not df_bitacora.empty:
-        st.download_button(
-            label="📥 Exportar Bitácora a Excel",
-            data=to_excel(df_bitacora),
-            file_name=(
-                f"reporte_bitacora_{datetime.now().strftime('%Y%m%d')}.xlsx"
-            ),
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
-            )
