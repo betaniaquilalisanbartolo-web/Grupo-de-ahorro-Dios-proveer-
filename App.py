@@ -68,7 +68,6 @@ def init_db():
         """)
         )
 
-        # Insertar contraseña por defecto ('admin123') cifrada si no existe
         res = conn.execute(
             text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
         ).fetchone()
@@ -82,7 +81,7 @@ def init_db():
                 {"val": pass_default_hash},
             )
 
-        # Socios
+        # Socios Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS socios (
@@ -95,7 +94,7 @@ def init_db():
         """)
         )
 
-        # Ahorros
+        # Ahorros Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS ahorros (
@@ -109,7 +108,7 @@ def init_db():
         """)
         )
 
-        # Préstamos
+        # Préstamos Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS prestamos (
@@ -127,7 +126,7 @@ def init_db():
         """)
         )
 
-        # Pagos de Préstamos
+        # Pagos Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS pagos (
@@ -142,24 +141,7 @@ def init_db():
         """)
         )
 
-        # MIGRACIÓN AUTOMÁTICA
-        conn.execute(
-            text(
-                "ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_capital"
-                " NUMERIC(12, 2) DEFAULT 0.00;"
-            )
-        )
-        conn.execute(
-            text(
-                "ALTER TABLE pagos ADD COLUMN IF NOT EXISTS monto_interes"
-                " NUMERIC(12, 2) DEFAULT 0.00;"
-            )
-        )
-        conn.execute(
-            text("ALTER TABLE pagos ADD COLUMN IF NOT EXISTS tipo VARCHAR(20);")
-        )
-
-        # Egresos y Gastos Operativos
+        # Egresos Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS egresos (
@@ -172,7 +154,7 @@ def init_db():
         """)
         )
 
-        # Cierres Anuales
+        # Cierres Anuales y Bitácora
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS cierres_anuales (
@@ -185,7 +167,6 @@ def init_db():
         """)
         )
 
-        # Bitácora de Auditoría
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS bitacora (
@@ -198,17 +179,70 @@ def init_db():
         )
 
         # ==========================================
-        # TABLA INDEPENDIENTE PARA USO PERSONAL
+        # TABLAS INDEPENDIENTES PARA PROYECTOS PERSONALES
         # ==========================================
         conn.execute(
             text("""
-            CREATE TABLE IF NOT EXISTS personal_registros (
+            CREATE TABLE IF NOT EXISTS personal_socios (
                 id SERIAL PRIMARY KEY,
-                titulo VARCHAR(255) NOT NULL,
-                categoria VARCHAR(100),
-                monto NUMERIC(12, 2) DEFAULT 0.00,
+                nombre VARCHAR(255) NOT NULL,
+                telefono VARCHAR(50),
+                fecha_registro DATE NOT NULL,
+                estado VARCHAR(20) DEFAULT 'Activo'
+            );
+        """)
+        )
+
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS personal_ahorros (
+                id SERIAL PRIMARY KEY,
+                socio_id INTEGER NOT NULL REFERENCES personal_socios(id),
+                monto NUMERIC(12, 2) NOT NULL,
                 fecha DATE NOT NULL,
-                descripcion TEXT
+                nota TEXT
+            );
+        """)
+        )
+
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS personal_prestamos (
+                id SERIAL PRIMARY KEY,
+                socio_id INTEGER NOT NULL REFERENCES personal_socios(id),
+                monto_prestado NUMERIC(12, 2) NOT NULL,
+                tasa_interes NUMERIC(5, 2) NOT NULL,
+                plazo_meses INTEGER NOT NULL,
+                interes_total NUMERIC(12, 2) NOT NULL,
+                monto_total NUMERIC(12, 2) NOT NULL,
+                fecha_inicio DATE NOT NULL,
+                estado VARCHAR(20) DEFAULT 'Activo'
+            );
+        """)
+        )
+
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS personal_pagos (
+                id SERIAL PRIMARY KEY,
+                prestamo_id INTEGER NOT NULL REFERENCES personal_prestamos(id),
+                monto_pagado NUMERIC(12, 2) NOT NULL,
+                monto_capital NUMERIC(12, 2) DEFAULT 0.00,
+                monto_interes NUMERIC(12, 2) DEFAULT 0.00,
+                fecha DATE NOT NULL,
+                tipo VARCHAR(20)
+            );
+        """)
+        )
+
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS personal_egresos (
+                id SERIAL PRIMARY KEY,
+                concepto VARCHAR(255) NOT NULL,
+                monto NUMERIC(12, 2) NOT NULL,
+                fecha DATE NOT NULL,
+                responsable VARCHAR(100)
             );
         """)
         )
@@ -320,10 +354,8 @@ def generar_recibo_pdf(
 
     story = []
 
-    story.append(Paragraph("<b>CAJA DE AHORRO COMUNITARIO</b>", style_header))
-    story.append(
-        Paragraph("Comprobante Oficial de Pago de Préstamo", style_sub)
-    )
+    story.append(Paragraph("<b>COMPROBANTE OFICIAL</b>", style_header))
+    story.append(Paragraph("Recibo de Pago", style_sub))
     story.append(Spacer(1, 10))
     story.append(
         HRFlowable(
@@ -341,7 +373,7 @@ def generar_recibo_pdf(
             Paragraph(str(fecha), style_body),
         ],
         [
-            Paragraph("<b>Socio / Beneficiario:</b>", style_bold),
+            Paragraph("<b>Cliente / Socio:</b>", style_bold),
             Paragraph(str(socio), style_body),
         ],
         [
@@ -370,7 +402,7 @@ def generar_recibo_pdf(
             Paragraph(f"C$ {monto_capital:,.2f}", style_body),
         ],
         [
-            Paragraph("Pago de Interés Mensual", style_body),
+            Paragraph("Pago de Interés", style_body),
             Paragraph(f"C$ {monto_interes:,.2f}", style_body),
         ],
         [
@@ -402,8 +434,8 @@ def generar_recibo_pdf(
             Paragraph("_______________________________", style_sub),
         ],
         [
-            Paragraph("<b>Firma Entregado (Socio)</b>", style_sub),
-            Paragraph("<b>Firma Recibido (Caja)</b>", style_sub),
+            Paragraph("<b>Firma Entregado</b>", style_sub),
+            Paragraph("<b>Firma Recibido</b>", style_sub),
         ],
     ]
     t_firmas = Table(firmas_tabla, colWidths=[250, 250])
@@ -424,8 +456,7 @@ def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
             df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
             df_a = pd.read_sql(
                 text(
-                    "SELECT * FROM ahorros WHERE EXTRACT(YEAR FROM fecha) ="
-                    " :a"
+                    "SELECT * FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"
                 ),
                 conn,
                 params={"a": anio_filtro},
@@ -689,7 +720,7 @@ if opcion == "📊 Panel General":
         )
 
 # ==========================================
-# SECCIÓN 2: GESTIÓN DE SOCIOS
+# SECCIÓN 2: GESTIÓN DE SOCIOS COMUNITARIOS
 # ==========================================
 elif opcion == "👥 Socios":
     st.title("👥 Control de Socios")
@@ -875,7 +906,7 @@ elif opcion == "👥 Socios":
                     st.rerun()
 
 # ==========================================
-# SECCIÓN 3: AHORROS Y CUOTAS
+# SECCIÓN 3: AHORROS Y CUOTAS COMUNITARIAS
 # ==========================================
 elif opcion == "💵 Ahorros y Cuotas":
     st.title("💵 Registro de Ahorros")
@@ -1034,92 +1065,220 @@ elif opcion == "💵 Ahorros y Cuotas":
                         st.rerun()
 
 # ==========================================
-# SECCIÓN: MIS PROYECTOS PERSONALES
+# SECCIÓN: MIS PROYECTOS PERSONALES (ESTRUCTURA COMPLETA SIMILAR)
 # ==========================================
 elif opcion == "📂 Mis Proyectos Personales":
-    st.title("📂 Espacio de Uso Personal y Proyectos")
-    st.caption(
-        "Sección privada e independiente para la gestión de tus finanzas y"
-        " proyectos personales."
+    st.title("📂 Espacio de Uso Personal y Préstamos Privados")
+    st.caption("Gestión independiente de clientes, préstamos personales, ahorros y gastos propios.")
+
+    p_opcion = st.radio(
+        "Selecciona una herramienta personal:",
+        [
+            "👥 Clientes / Socios Personales",
+            "💵 Ahorros Personales",
+            "🤝 Préstamos Personales",
+            "🧮 Simulador Personal",
+            "📖 Pagos y Recibos Personales",
+            "💸 Egresos y Gastos Personales",
+            "📜 Estado de Cuenta Personal"
+        ],
+        horizontal=True
     )
+    st.markdown("---")
 
-    tab_p1, tab_p2 = st.tabs(
-        ["➕ Registrar Movimiento", "📋 Historial y Resumen Personal"]
-    )
+    # 1. CLIENTES / SOCIOS PERSONALES
+    if p_opcion == "👥 Clientes / Socios Personales":
+        st.subheader("Control de Clientes / Socios (Personal)")
+        ptab1, ptab2 = st.tabs(["📋 Listado", "➕ Registrar Cliente"])
+        
+        with ptab1:
+            with motor.connect() as conn:
+                df_ps = pd.read_sql(text("SELECT id as \"ID\", nombre as \"Nombre\", telefono as \"Teléfono\", fecha_registro as \"Fecha Registro\", estado as \"Estado\" FROM personal_socios ORDER BY id ASC"), conn)
+            if not df_ps.empty:
+                st.dataframe(df_ps, use_container_width=True)
+            else:
+                st.info("No hay clientes personales registrados.")
+        
+        with ptab2:
+            with st.form("form_psocio", clear_on_submit=True):
+                pnomb = st.text_input("Nombre Completo *")
+                ptel = st.text_input("Teléfono / WhatsApp")
+                pfecha = st.date_input("Fecha de Registro", datetime.now())
+                p_env = st.form_submit_button("Guardar Cliente")
+                if p_env:
+                    if pnomb.strip():
+                        with motor.begin() as conn:
+                            conn.execute(text("INSERT INTO personal_socios (nombre, telefono, fecha_registro) VALUES (:n, :t, :f)"), {"n": pnomb, "t": ptel, "f": str(pfecha)})
+                        st.success(f"¡Cliente '{pnomb}' registrado con éxito!")
+                        st.rerun()
+                    else:
+                        st.error("El nombre es obligatorio.")
 
-    with tab_p1:
-        st.subheader("Nuevo Registro Personal")
-        with st.form("form_personal", clear_on_submit=True):
-            p_titulo = st.text_input("Título / Concepto *")
-            p_categoria = st.selectbox(
-                "Categoría",
-                [
-                    "Ahorro Personal",
-                    "Inversión",
-                    "Gasto Personal",
-                    "Proyecto de Costura/Manualidades",
-                    "Desarrollo Software",
-                    "Otro",
-                ],
-            )
-            p_monto = st.number_input(
-                "Monto (C$ / USD)", min_value=0.0, step=10.0
-            )
-            p_fecha = st.date_input("Fecha", datetime.now())
-            p_desc = st.text_area("Descripción o Notas detalladas")
-            btn_guardar_personal = st.form_submit_button(
-                "Guardar en Espacio Personal"
-            )
-
-            if btn_guardar_personal:
-                if p_titulo.strip() == "":
-                    st.error("El título es obligatorio.")
-                else:
+    # 2. AHORROS PERSONALES
+    elif p_opcion == "💵 Ahorros Personales":
+        st.subheader("Depósitos de Ahorro Personal")
+        with motor.connect() as conn:
+            df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
+        
+        if df_psoc.empty:
+            st.warning("Primero registra un cliente/socio en la pestaña anterior.")
+        else:
+            dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
+            with st.form("form_pahorro", clear_on_submit=True):
+                psel = st.selectbox("Seleccionar Socio/Cliente", list(dict_ps.keys()))
+                pmonto = st.number_input("Monto del Ahorro (C$)", min_value=1.0, step=10.0)
+                pfech = st.date_input("Fecha", datetime.now())
+                pnote = st.text_input("Nota u Observación")
+                pbtn_ah = st.form_submit_button("Registrar Ahorro Personal")
+                
+                if pbtn_ah:
+                    sid = dict_ps[psel]
                     with motor.begin() as conn:
-                        conn.execute(
-                            text(
-                                "INSERT INTO personal_registros (titulo,"
-                                " categoria, monto, fecha, descripcion) VALUES"
-                                " (:titulo, :cat, :monto, :fecha, :desc)"
-                            ),
-                            {
-                                "titulo": p_titulo,
-                                "cat": p_categoria,
-                                "monto": p_monto,
-                                "fecha": str(p_fecha),
-                                "desc": p_desc,
-                            },
-                        )
-                    st.success(
-                        "¡Registro personal guardado con éxito de forma"
-                        " independiente!"
-                    )
+                        conn.execute(text("INSERT INTO personal_ahorros (socio_id, monto, fecha, nota) VALUES (:s, :m, :f, :n)"), {"s": sid, "m": pmonto, "f": str(pfech), "n": pnote})
+                    st.success("¡Ahorro personal registrado correctamente!")
+                    st.rerun()
+            
+            with motor.connect() as conn:
+                df_pah_hist = pd.read_sql(text("SELECT a.id, s.nombre as cliente, a.monto, a.fecha, a.nota FROM personal_ahorros a JOIN personal_socios s ON a.socio_id = s.id ORDER BY a.fecha DESC"), conn)
+            if not df_pah_hist.empty:
+                st.dataframe(df_pah_hist, use_container_width=True)
+
+    # 3. PRÉSTAMOS PERSONALES
+    elif p_opcion == "🤝 Préstamos Personales":
+        st.subheader("Otorgar Préstamo Personal")
+        with motor.connect() as conn:
+            df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
+        
+        if df_psoc.empty:
+            st.warning("Registra un cliente primero.")
+        else:
+            dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
+            with st.form("form_pprestamo"):
+                psoc = st.selectbox("Cliente / Socio", list(dict_ps.keys()))
+                pmonto_p = st.number_input("Monto Prestado (C$)", min_value=100.0, step=100.0)
+                ptasa = st.number_input("Tasa de Interés Mensual (%)", min_value=0.0, value=5.0)
+                pplazo = st.number_input("Plazo (Meses)", min_value=1, value=12, step=1)
+                pfech_ini = st.date_input("Fecha de Inicio", datetime.now())
+                pbtn_prest = st.form_submit_button("Crear Préstamo Personal")
+                
+                if pbtn_prest:
+                    sid = dict_ps[psoc]
+                    interes_tot = pmonto_p * (ptasa / 100.0) * pplazo
+                    monto_tot = pmonto_p + interes_tot
+                    with motor.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO personal_prestamos (socio_id, monto_prestado, tasa_interes, plazo_meses, interes_total, monto_total, fecha_inicio)
+                            VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi)
+                        """), {
+                            "s": sid, "mp": pmonto_p, "ti": ptasa, "pl": pplazo, "it": interes_tot, "mt": monto_tot, "fi": str(pfech_ini)
+                        })
+                    st.success("¡Préstamo personal creado con éxito!")
                     st.rerun()
 
-    with tab_p2:
-        st.subheader("Historial de Proyectos Personales")
-        with motor.connect() as conn:
-            df_personal = pd.read_sql(
-                text(
-                    "SELECT id as \"ID\", titulo as \"Título\", categoria as"
-                    ' "Categoría", monto as "Monto", fecha as "Fecha",'
-                    ' descripcion as "Descripción" FROM personal_registros'
-                    " ORDER BY fecha DESC"
-                ),
-                conn,
-            )
+            with motor.connect() as conn:
+                df_pp_hist = pd.read_sql(text("SELECT p.id, s.nombre as cliente, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id ORDER BY p.id DESC"), conn)
+            if not df_pp_hist.empty:
+                st.dataframe(df_pp_hist, use_container_width=True)
 
-        if not df_personal.empty:
-            st.dataframe(df_personal, use_container_width=True)
-            st.download_button(
-                label="📥 Exportar Mis Datos Personales (Excel)",
-                data=to_excel(df_personal),
-                file_name=(
-                    f"proyectos_personales_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                ),
-                mime=(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                ),
-            )
+    # 4. SIMULADOR PERSONAL
+    elif p_opcion == "🧮 Simulador Personal":
+        st.subheader("Simulador de Préstamos Personales")
+        s_monto = st.number_input("Monto a simular (C$)", min_value=100.0, value=5000.0, step=500.0)
+        s_tasa = st.number_input("Tasa de interés mensual (%)", min_value=0.0, value=5.0, step=0.5)
+        s_plazo = st.number_input("Plazo en meses", min_value=1, value=12, step=1)
+        
+        if st.button("Calcular Simulación"):
+            interes_mes = s_monto * (s_tasa / 100.0)
+            capital_mes = s_monto / s_plazo
+            cuota_total = interes_mes + capital_mes
+            total_pagar = s_monto + (interes_mes * s_plazo)
+            
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Cuota Mensual Aprox.", f"C$ {cuota_total:,.2f}")
+            c2.metric("Interés Total", f"C$ {interes_mes * s_plazo:,.2f}")
+            c3.metric("Monto Total a Pagar", f"C$ {total_pagar:,.2f}")
+
+    # 5. PAGOS Y RECIBOS PERSONALES
+    elif p_opcion == "📖 Pagos y Recibos Personales":
+        st.subheader("Registrar Abono / Pago y Generar Recibo PDF")
+        with motor.connect() as conn:
+            df_pactivo = pd.read_sql(text("SELECT p.id, s.nombre, p.monto_total FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE p.estado = 'Activo'"), conn)
+        
+        if df_pactivo.empty:
+            st.info("No hay préstamos personales activos para abonar.")
         else:
-            st.info("Aún no tienes registros en tu espacio personal.")
+            dict_prest = {f"Préstamo #{row['id']} - {row['nombre']} (Total: C$ {row['monto_total']:,.2f})": row['id'] for _, row in df_pactivo.iterrows()}
+            sel_p = st.selectbox("Seleccionar Préstamo", list(dict_prest.keys()))
+            pid_sel = dict_prest[sel_p]
+            
+            with st.form("form_ppago"):
+                m_pagado = st.number_input("Monto Pagado (C$)", min_value=1.0, step=10.0)
+                m_cap = st.number_input("Aplicado a Capital (C$)", min_value=0.0, step=10.0)
+                m_int = st.number_input("Aplicado a Interés (C$)", min_value=0.0, step=10.0)
+                f_pago = st.date_input("Fecha de Pago", datetime.now())
+                b_pago = st.form_submit_button("Registrar Pago y Generar Recibo")
+                
+                if b_pago:
+                    with motor.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO personal_pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
+                            VALUES (:pid, :mp, :mc, :mi, :f, 'Abono')
+                        """), {"pid": pid_sel, "mp": m_pagado, "mc": m_cap, "mi": m_int, "f": str(f_pago)})
+                    st.success("¡Pago registrado con éxito!")
+                    
+                    # Generar Recibo PDF
+                    pdf_bytes = generar_recibo_pdf(
+                        comprobante_id=f"RECIBO-PER-{pid_sel}",
+                        fecha=str(f_pago),
+                        socio=sel_p.split("-")[1].split("(")[0].strip(),
+                        prestamo_ref=f"Préstamo Personal #{pid_sel}",
+                        monto_total=m_pagado,
+                        monto_capital=m_cap,
+                        monto_interes=m_int,
+                        capital_pendiente=0.0
+                    )
+                    st.download_button(
+                        label="📄 Descargar Recibo Oficial en PDF",
+                        data=pdf_bytes,
+                        file_name=f"recibo_personal_{pid_sel}.pdf",
+                        mime="application/pdf"
+                    )
+
+    # 6. EGRESOS Y GASTOS PERSONALES
+    elif p_opcion == "💸 Egresos y Gastos Personales":
+        st.subheader("Control de Gastos y Egresos Personales")
+        with st.form("form_pegresos", clear_on_submit=True):
+            concepto = st.text_input("Concepto del Gasto *")
+            monto_eg = st.number_input("Monto (C$)", min_value=1.0, step=10.0)
+            fecha_eg = st.date_input("Fecha", datetime.now())
+            resp = st.text_input("Responsable / Nota", value="Personal")
+            btn_eg = st.form_submit_button("Guardar Gasto")
+            
+            if btn_eg:
+                if concepto.strip():
+                    with motor.begin() as conn:
+                        conn.execute(text("INSERT INTO personal_egresos (concepto, monto, fecha, responsable) VALUES (:c, :m, :f, :r)"), {"c": concepto, "m": monto_eg, "f": str(fecha_eg), "r": resp})
+                    st.success("¡Gasto registrado correctamente!")
+                    st.rerun()
+                else:
+                    st.error("El concepto es obligatorio.")
+
+        with motor.connect() as conn:
+            df_eg_hist = pd.read_sql(text("SELECT id as \"ID\", concepto as \"Concepto\", monto as \"Monto\", fecha as \"Fecha\", responsable as \"Responsable\" FROM personal_egresos ORDER BY fecha DESC"), conn)
+        if not df_eg_hist.empty:
+            st.dataframe(df_eg_hist, use_container_width=True)
+
+    # 7. ESTADO DE CUENTA PERSONAL
+    elif p_opcion == "📜 Estado de Cuenta Personal":
+        st.subheader("Estado de Cuenta Consolidado")
+        with motor.connect() as conn:
+            tot_ah_p = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros"), conn)["t"].iloc[0]
+            tot_pr_p = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE estado='Activo'"), conn)["t"].iloc[0]
+            tot_pg_p = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos"), conn)["t"].iloc[0]
+            tot_eg_p = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos"), conn)["t"].iloc[0]
+        
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Ahorros Personales", f"C$ {float(tot_ah_p):,.2f}")
+        c2.metric("Préstamos Activos", f"C$ {float(tot_pr_p):,.2f}")
+        c3.metric("Cobros Recaudados", f"C$ {float(tot_pg_p):,.2f}")
+        c4.metric("Gastos Personales", f"C$ {float(tot_eg_p):,.2f}")
