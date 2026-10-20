@@ -197,6 +197,22 @@ def init_db():
         """)
         )
 
+        # ==========================================
+        # TABLA INDEPENDIENTE PARA USO PERSONAL
+        # ==========================================
+        conn.execute(
+            text("""
+            CREATE TABLE IF NOT EXISTS personal_registros (
+                id SERIAL PRIMARY KEY,
+                titulo VARCHAR(255) NOT NULL,
+                categoria VARCHAR(100),
+                monto NUMERIC(12, 2) DEFAULT 0.00,
+                fecha DATE NOT NULL,
+                descripcion TEXT
+            );
+        """)
+        )
+
 
 if "db_inicializada" not in st.session_state:
     init_db()
@@ -535,6 +551,7 @@ opcion = st.sidebar.radio(
         "🎉 Liquidación Anual",
         "📅 Cierre Mensual y Anual",
         "🛡️ Bitácora de Auditoría",
+        "📂 Mis Proyectos Personales",
     ],
 )
 
@@ -1015,3 +1032,94 @@ elif opcion == "💵 Ahorros y Cuotas":
                         )
                         st.warning("Registro de ahorro eliminado.")
                         st.rerun()
+
+# ==========================================
+# SECCIÓN: MIS PROYECTOS PERSONALES
+# ==========================================
+elif opcion == "📂 Mis Proyectos Personales":
+    st.title("📂 Espacio de Uso Personal y Proyectos")
+    st.caption(
+        "Sección privada e independiente para la gestión de tus finanzas y"
+        " proyectos personales."
+    )
+
+    tab_p1, tab_p2 = st.tabs(
+        ["➕ Registrar Movimiento", "📋 Historial y Resumen Personal"]
+    )
+
+    with tab_p1:
+        st.subheader("Nuevo Registro Personal")
+        with st.form("form_personal", clear_on_submit=True):
+            p_titulo = st.text_input("Título / Concepto *")
+            p_categoria = st.selectbox(
+                "Categoría",
+                [
+                    "Ahorro Personal",
+                    "Inversión",
+                    "Gasto Personal",
+                    "Proyecto de Costura/Manualidades",
+                    "Desarrollo Software",
+                    "Otro",
+                ],
+            )
+            p_monto = st.number_input(
+                "Monto (C$ / USD)", min_value=0.0, step=10.0
+            )
+            p_fecha = st.date_input("Fecha", datetime.now())
+            p_desc = st.text_area("Descripción o Notas detalladas")
+            btn_guardar_personal = st.form_submit_button(
+                "Guardar en Espacio Personal"
+            )
+
+            if btn_guardar_personal:
+                if p_titulo.strip() == "":
+                    st.error("El título es obligatorio.")
+                else:
+                    with motor.begin() as conn:
+                        conn.execute(
+                            text(
+                                "INSERT INTO personal_registros (titulo,"
+                                " categoria, monto, fecha, descripcion) VALUES"
+                                " (:titulo, :cat, :monto, :fecha, :desc)"
+                            ),
+                            {
+                                "titulo": p_titulo,
+                                "cat": p_categoria,
+                                "monto": p_monto,
+                                "fecha": str(p_fecha),
+                                "desc": p_desc,
+                            },
+                        )
+                    st.success(
+                        "¡Registro personal guardado con éxito de forma"
+                        " independiente!"
+                    )
+                    st.rerun()
+
+    with tab_p2:
+        st.subheader("Historial de Proyectos Personales")
+        with motor.connect() as conn:
+            df_personal = pd.read_sql(
+                text(
+                    "SELECT id as \"ID\", titulo as \"Título\", categoria as"
+                    ' "Categoría", monto as "Monto", fecha as "Fecha",'
+                    ' descripcion as "Descripción" FROM personal_registros'
+                    " ORDER BY fecha DESC"
+                ),
+                conn,
+            )
+
+        if not df_personal.empty:
+            st.dataframe(df_personal, use_container_width=True)
+            st.download_button(
+                label="📥 Exportar Mis Datos Personales (Excel)",
+                data=to_excel(df_personal),
+                file_name=(
+                    f"proyectos_personales_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                ),
+            )
+        else:
+            st.info("Aún no tienes registros en tu espacio personal.")
