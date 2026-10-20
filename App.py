@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 from sqlalchemy import create_engine, text
 
-# ReportLab para la generación del Recibo en PDF
+# ReportLab para la generación de Comprobantes y Estados de Cuenta en PDF
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
@@ -34,7 +34,6 @@ motor = obtener_motor()
 
 
 def hash_password(password: str, salt: bytes = None) -> str:
-    """Genera un hash seguro SHA-256 con salt para almacenar la contraseña."""
     if salt is None:
         salt = os.urandom(16)
     elif isinstance(salt, str):
@@ -46,7 +45,6 @@ def hash_password(password: str, salt: bytes = None) -> str:
 
 
 def verificar_contrasena(contrasena_ingresada: str, hash_almacenado: str) -> bool:
-    """Verifica si la contraseña ingresada coincide con el hash almacenado."""
     try:
         salt_hex, _ = hash_almacenado.split(":")
         salt = bytes.fromhex(salt_hex)
@@ -80,7 +78,7 @@ def init_db():
                 {"val": pass_default_hash},
             )
 
-        # Tablas Comunitarias
+        # TABLAS COMUNITARIAS
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS socios (
@@ -172,7 +170,7 @@ def init_db():
         """)
         )
 
-        # Tablas Personales Independientes
+        # TABLAS PERSONALES INDEPENDIENTES
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS personal_socios (
@@ -246,7 +244,7 @@ if "db_inicializada" not in st.session_state:
 
 
 # ==========================================
-# 3. FUNCIONES UTILITARIAS Y DE SEGURIDAD
+# 3. FUNCIONES UTILITARIAS Y GENERACIÓN PDF
 # ==========================================
 def obtener_hash_password_bd():
     with motor.connect() as conn:
@@ -279,159 +277,119 @@ def to_excel(df: pd.DataFrame) -> bytes:
     return salida.getvalue()
 
 
-def generar_recibo_pdf(
+# GENERADORES PDF REPORTLAB
+def generar_comprobante_generico_pdf(
+    titulo_doc: str,
+    subtitulo: str,
     comprobante_id: str,
     fecha: str,
-    socio: str,
-    prestamo_ref: str,
-    monto_total: float,
-    monto_capital: float,
-    monto_interes: float,
-    capital_pendiente: float,
+    persona: str,
+    detalles_dict: dict,
 ) -> bytes:
+    """Genera comprobantes genéricos elegantes en PDF (Ahorro, Egreso, Préstamo, Pago)."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
-        buffer,
-        pagesize=letter,
-        rightMargin=40,
-        leftMargin=40,
-        topMargin=40,
-        bottomMargin=40,
+        buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40
     )
     styles = getSampleStyleSheet()
 
-    style_header = ParagraphStyle(
-        "HeaderStyle",
-        parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
-        fontSize=18,
-        leading=22,
-        textColor=colors.HexColor("#1A365D"),
-        alignment=1,
-    )
-
-    style_sub = ParagraphStyle(
-        "SubStyle",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=11,
-        leading=14,
-        textColor=colors.HexColor("#4A5568"),
-        alignment=1,
-    )
-
-    style_title_recibo = ParagraphStyle(
-        "ReciboTitle",
-        parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
-        fontSize=14,
-        leading=18,
-        textColor=colors.HexColor("#2B6CB0"),
-        alignment=1,
-    )
-
-    style_body = ParagraphStyle(
-        "BodyStyle",
-        parent=styles["Normal"],
-        fontName="Helvetica",
-        fontSize=10,
-        leading=14,
-        textColor=colors.HexColor("#2D3748"),
-    )
-
-    style_bold = ParagraphStyle(
-        "BoldStyle", parent=style_body, fontName="Helvetica-Bold"
-    )
+    style_header = ParagraphStyle("HeaderStyle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, leading=22, textColor=colors.HexColor("#1A365D"), alignment=1)
+    style_sub = ParagraphStyle("SubStyle", parent=styles["Normal"], fontName="Helvetica", fontSize=11, leading=14, textColor=colors.HexColor("#4A5568"), alignment=1)
+    style_title = ParagraphStyle("TitleStyle", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=14, leading=18, textColor=colors.HexColor("#2B6CB0"), alignment=1)
+    style_body = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName="Helvetica", fontSize=10, leading=14, textColor=colors.HexColor("#2D3748"))
+    style_bold = ParagraphStyle("BoldStyle", parent=style_body, fontName="Helvetica-Bold")
 
     story = []
-    story.append(Paragraph("<b>COMPROBANTE OFICIAL</b>", style_header))
-    story.append(Paragraph("Recibo de Pago", style_sub))
+    story.append(Paragraph(f"<b>{titulo_doc}</b>", style_header))
+    story.append(Paragraph(subtitulo, style_sub))
     story.append(Spacer(1, 10))
-    story.append(
-        HRFlowable(
-            width="100%", thickness=1.5, color=colors.HexColor("#2B6CB0")
-        )
-    )
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2B6CB0")))
     story.append(Spacer(1, 15))
-    story.append(Paragraph(f"<b>{comprobante_id}</b>", style_title_recibo))
+    story.append(Paragraph(f"<b>{comprobante_id}</b>", style_title))
     story.append(Spacer(1, 10))
 
     datos_tabla = [
-        [
-            Paragraph("<b>Fecha de Pago:</b>", style_bold),
-            Paragraph(str(fecha), style_body),
-        ],
-        [
-            Paragraph("<b>Cliente / Socio:</b>", style_bold),
-            Paragraph(str(socio), style_body),
-        ],
-        [
-            Paragraph("<b>Referencia:</b>", style_bold),
-            Paragraph(str(prestamo_ref), style_body),
-        ],
+        [Paragraph("<b>Fecha:</b>", style_bold), Paragraph(str(fecha), style_body)],
+        [Paragraph("<b>Cliente / Titular:</b>", style_bold), Paragraph(str(persona), style_body)],
     ]
-
     t_info = Table(datos_tabla, colWidths=[150, 350])
-    t_info.setStyle(
-        TableStyle([
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-        ])
-    )
+    t_info.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("BOTTOMPADDING", (0, 0), (-1, -1), 6)]))
     story.append(t_info)
     story.append(Spacer(1, 15))
 
-    desglose_tabla = [
-        [
-            Paragraph("<b>Concepto / Detalle</b>", style_bold),
-            Paragraph("<b>Monto (C$)</b>", style_bold),
-        ],
-        [
-            Paragraph("Abono Aplicado a Capital", style_body),
-            Paragraph(f"C$ {monto_capital:,.2f}", style_body),
-        ],
-        [
-            Paragraph("Pago de Interés", style_body),
-            Paragraph(f"C$ {monto_interes:,.2f}", style_body),
-        ],
-        [
-            Paragraph("<b>TOTAL RECIBIDO</b>", style_bold),
-            Paragraph(f"<b>C$ {monto_total:,.2f}</b>", style_bold),
-        ],
-        [
-            Paragraph("Saldo Capital Pendiente", style_body),
-            Paragraph(f"C$ {capital_pendiente:,.2f}", style_body),
-        ],
-    ]
+    desglose_tabla = [[Paragraph("<b>Concepto / Parámetro</b>", style_bold), Paragraph("<b>Detalle / Valor</b>", style_bold)]]
+    for k, v in detalles_dict.items():
+        desglose_tabla.append([Paragraph(str(k), style_body), Paragraph(str(v), style_bold if "C$" in str(v) else style_body)])
 
-    t_desglose = Table(desglose_tabla, colWidths=[320, 180])
-    t_desglose.setStyle(
-        TableStyle([
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1A202C")),
-            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
-            ("PADDING", (0, 0), (-1, -1), 8),
-            ("BACKGROUND", (0, 3), (-1, 3), colors.HexColor("#EDF2F7")),
-        ])
-    )
+    t_desglose = Table(desglose_tabla, colWidths=[280, 220])
+    t_desglose.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1A202C")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")),
+        ("PADDING", (0, 0), (-1, -1), 8),
+    ]))
     story.append(t_desglose)
     story.append(Spacer(1, 50))
 
     firmas_tabla = [
-        [
-            Paragraph("_______________________________", style_sub),
-            Paragraph("_______________________________", style_sub),
-        ],
-        [
-            Paragraph("<b>Firma Entregado</b>", style_sub),
-            Paragraph("<b>Firma Recibido</b>", style_sub),
-        ],
+        [Paragraph("_______________________________", style_sub), Paragraph("_______________________________", style_sub)],
+        [Paragraph("<b>Firma Cliente</b>", style_sub), Paragraph("<b>Firma Autorizada</b>", style_sub)],
     ]
     t_firmas = Table(firmas_tabla, colWidths=[250, 250])
-    t_firmas.setStyle(
-        TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"), ("TOPPADDING", (0, 1), (-1, 1), 4)])
-    )
+    t_firmas.setStyle(TableStyle([("ALIGN", (0, 0), (-1, -1), "CENTER"), ("TOPPADDING", (0, 1), (-1, 1), 4)]))
     story.append(t_firmas)
+
+    doc.build(story)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def generar_estado_cuenta_pdf(cliente: str, df_ahorros: pd.DataFrame, df_prestamos: pd.DataFrame) -> bytes:
+    """Genera reporte PDF completo de Estado de Cuenta Personal."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40)
+    styles = getSampleStyleSheet()
+
+    style_header = ParagraphStyle("HeaderStyle", parent=styles["Heading1"], fontName="Helvetica-Bold", fontSize=18, textColor=colors.HexColor("#1A365D"), alignment=1)
+    style_sub = ParagraphStyle("SubStyle", parent=styles["Normal"], fontName="Helvetica", fontSize=11, textColor=colors.HexColor("#4A5568"), alignment=1)
+    style_sec = ParagraphStyle("SecStyle", parent=styles["Heading2"], fontName="Helvetica-Bold", fontSize=13, textColor=colors.HexColor("#2B6CB0"))
+    style_body = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName="Helvetica", fontSize=9, textColor=colors.HexColor("#2D3748"))
+    style_bold = ParagraphStyle("BoldStyle", parent=style_body, fontName="Helvetica-Bold")
+
+    story = []
+    story.append(Paragraph("<b>ESTADO DE CUENTA PERSONAL</b>", style_header))
+    story.append(Paragraph(f"Cliente: <b>{cliente}</b> | Fecha: {datetime.now().strftime('%Y-%m-%d')}", style_sub))
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#2B6CB0")))
+    story.append(Spacer(1, 15))
+
+    # Ahorros
+    story.append(Paragraph("<b>Resumen de Ahorros</b>", style_sec))
+    story.append(Spacer(1, 5))
+    if not df_ahorros.empty:
+        t_ah_data = [[Paragraph("<b>Fecha</b>", style_bold), Paragraph("<b>Monto (C$)</b>", style_bold), Paragraph("<b>Nota</b>", style_bold)]]
+        for _, r in df_ahorros.iterrows():
+            t_ah_data.append([Paragraph(str(r["fecha"]), style_body), Paragraph(f"C$ {r['monto']:,.2f}", style_body), Paragraph(str(r["nota"] or "-"), style_body)])
+        t_ah = Table(t_ah_data, colWidths=[100, 150, 250])
+        t_ah.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDF2F7")), ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")), ("PADDING", (0, 0), (-1, -1), 6)]))
+        story.append(t_ah)
+    else:
+        story.append(Paragraph("Sin ahorros registrados.", style_body))
+
+    story.append(Spacer(1, 15))
+
+    # Préstamos
+    story.append(Paragraph("<b>Resumen de Préstamos</b>", style_sec))
+    story.append(Spacer(1, 5))
+    if not df_prestamos.empty:
+        t_pr_data = [[Paragraph("<b>ID</b>", style_bold), Paragraph("<b>Monto Prestado</b>", style_bold), Paragraph("<b>Tasa</b>", style_bold), Paragraph("<b>Total</b>", style_bold), Paragraph("<b>Estado</b>", style_bold)]]
+        for _, r in df_prestamos.iterrows():
+            t_pr_data.append([Paragraph(str(r["id"]), style_body), Paragraph(f"C$ {r['monto_prestado']:,.2f}", style_body), Paragraph(f"{r['tasa_interes']}%", style_body), Paragraph(f"C$ {r['monto_total']:,.2f}", style_body), Paragraph(str(r["estado"]), style_body)])
+        t_pr = Table(t_pr_data, colWidths=[40, 120, 80, 140, 120])
+        t_pr.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#EDF2F7")), ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#CBD5E0")), ("PADDING", (0, 0), (-1, -1), 6)]))
+        story.append(t_pr)
+    else:
+        story.append(Paragraph("Sin préstamos registrados.", style_body))
 
     doc.build(story)
     buffer.seek(0)
@@ -443,35 +401,10 @@ def exportar_consolidado_excel(anio_filtro: int = None) -> bytes:
     with motor.connect() as conn:
         if anio_filtro:
             df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
-            df_a = pd.read_sql(
-                text(
-                    "SELECT * FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"
-                ),
-                conn,
-                params={"a": anio_filtro},
-            )
-            df_p = pd.read_sql(
-                text(
-                    "SELECT * FROM prestamos WHERE EXTRACT(YEAR FROM"
-                    " fecha_inicio) = :a"
-                ),
-                conn,
-                params={"a": anio_filtro},
-            )
-            df_pg = pd.read_sql(
-                text(
-                    "SELECT * FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"
-                ),
-                conn,
-                params={"a": anio_filtro},
-            )
-            df_e = pd.read_sql(
-                text(
-                    "SELECT * FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a"
-                ),
-                conn,
-                params={"a": anio_filtro},
-            )
+            df_a = pd.read_sql(text("SELECT * FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro})
+            df_p = pd.read_sql(text("SELECT * FROM prestamos WHERE EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"a": anio_filtro})
+            df_pg = pd.read_sql(text("SELECT * FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro})
+            df_e = pd.read_sql(text("SELECT * FROM egresos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_filtro})
         else:
             df_s = pd.read_sql(text("SELECT * FROM socios"), conn)
             df_a = pd.read_sql(text("SELECT * FROM ahorros"), conn)
@@ -498,49 +431,30 @@ if "autenticado" not in st.session_state:
 st.sidebar.title("🔐 Control de Acceso")
 
 if not st.session_state.autenticado:
-    password_input = st.sidebar.text_input(
-        "Contraseña de Administrador", type="password"
-    )
+    password_input = st.sidebar.text_input("Contraseña de Administrador", type="password")
     if st.sidebar.button("Iniciar sesión"):
         hash_almacenado = obtener_hash_password_bd()
-        if hash_almacenado and verificar_contrasena(
-            password_input, hash_almacenado
-        ):
+        if hash_almacenado and verificar_contrasena(password_input, hash_almacenado):
             st.session_state.autenticado = True
             registrar_bitacora("Inicio de sesión exitosa como Administrador.")
             st.sidebar.success("¡Acceso concedido!")
             st.rerun()
         else:
             st.sidebar.error("Contraseña incorrecta.")
-    st.warning(
-        "⚠️ Debes iniciar sesión como Administrador en la barra lateral para"
-        " acceder al sistema."
-    )
+    st.warning("⚠️ Debes iniciar sesión como Administrador en la barra lateral para acceder al sistema.")
     st.stop()
 else:
     st.sidebar.success("Sesión activa como Administrador")
     with st.sidebar.expander("🔑 Cambiar Contraseña"):
-        pwd_actual = st.text_input(
-            "Contraseña Actual", type="password", key="pwd_act"
-        )
-        pwd_nueva = st.text_input(
-            "Nueva Contraseña", type="password", key="pwd_nuev"
-        )
+        pwd_actual = st.text_input("Contraseña Actual", type="password", key="pwd_act")
+        pwd_nueva = st.text_input("Nueva Contraseña", type="password", key="pwd_nuev")
         if st.button("Actualizar Clave"):
             hash_almacenado = obtener_hash_password_bd()
-            if hash_almacenado and verificar_contrasena(
-                pwd_actual, hash_almacenado
-            ):
+            if hash_almacenado and verificar_contrasena(pwd_actual, hash_almacenado):
                 if len(pwd_nueva.strip()) >= 4:
                     nuevo_hash = hash_password(pwd_nueva.strip())
                     with motor.begin() as conn:
-                        conn.execute(
-                            text(
-                                "UPDATE configuracion SET valor = :v WHERE"
-                                " clave = 'admin_password'"
-                            ),
-                            {"v": nuevo_hash},
-                        )
+                        conn.execute(text("UPDATE configuracion SET valor = :v WHERE clave = 'admin_password'"), {"v": nuevo_hash})
                     registrar_bitacora("Cambio de contraseña de administrador.")
                     st.success("Contraseña actualizada e encriptada correctamente.")
                 else:
@@ -583,37 +497,19 @@ if opcion == "📊 Panel General":
     st.caption("Resumen financiero consolidado en Córdoba (C$).")
 
     with motor.connect() as conn:
-        df_ahorros = pd.read_sql(
-            text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn
-        )
+        df_ahorros = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM ahorros"), conn)
         total_ahorrado = float(df_ahorros["total"].iloc[0])
 
-        df_prestamos = pd.read_sql(
-            text(
-                "SELECT COALESCE(SUM(monto_prestado), 0) as total FROM"
-                " prestamos WHERE estado = 'Activo'"
-            ),
-            conn,
-        )
+        df_prestamos = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as total FROM prestamos WHERE estado = 'Activo'"), conn)
         total_prestado = float(df_prestamos["total"].iloc[0])
 
-        df_pagos = pd.read_sql(
-            text("SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos"),
-            conn,
-        )
+        df_pagos = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as total FROM pagos"), conn)
         total_recaudado = float(df_pagos["total"].iloc[0])
 
-        df_egresos = pd.read_sql(
-            text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos"), conn
-        )
+        df_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as total FROM egresos"), conn)
         total_egresos = float(df_egresos["total"].iloc[0])
 
-        df_socios = pd.read_sql(
-            text(
-                "SELECT COUNT(*) as total FROM socios WHERE estado = 'Activo'"
-            ),
-            conn,
-        )
+        df_socios = pd.read_sql(text("SELECT COUNT(*) as total FROM socios WHERE estado = 'Activo'"), conn)
         total_socios = int(df_socios["total"].iloc[0])
 
         query_mora = """
@@ -636,23 +532,11 @@ if opcion == "📊 Panel General":
             """
         df_por_vencer = pd.read_sql(text(consulta_por_vencer), conn)
 
-        df_mora_sum = pd.read_sql(
-            text("""
-            SELECT COALESCE(SUM(monto_prestado), 0) as total
-            FROM prestamos
-            WHERE estado = 'Activo'
-            AND (fecha_inicio + MAKE_INTERVAL(months => plazo_meses)) < CURRENT_DATE
-            """),
-            conn,
-        )
+        df_mora_sum = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as total FROM prestamos WHERE estado = 'Activo' AND (fecha_inicio + MAKE_INTERVAL(months => plazo_meses)) < CURRENT_DATE"), conn)
         capital_mora = float(df_mora_sum["total"].iloc[0])
-        ratio_mora = (
-            (capital_mora / total_prestado * 100) if total_prestado > 0 else 0.0
-        )
+        ratio_mora = (capital_mora / total_prestado * 100) if total_prestado > 0 else 0.0
 
-        fondo_caja = (
-            total_ahorrado + total_recaudado - total_prestado - total_egresos
-        )
+        fondo_caja = total_ahorrado + total_recaudado - total_prestado - total_egresos
 
     col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("💰 Fondo Total Ahorrado", f"C$ {total_ahorrado:,.2f}")
@@ -664,10 +548,7 @@ if opcion == "📊 Panel General":
     col_a1, col_a2 = st.columns(2)
     with col_a1:
         if not df_mora.empty:
-            st.error(
-                f"⚠️ **Atención:** Se identificaron **{len(df_mora)}"
-                f" préstamo(s) en MORA** (Índice de Mora: **{ratio_mora:.1f}%**)."
-            )
+            st.error(f"⚠️ **Atención:** Se identificaron **{len(df_mora)} préstamo(s) en MORA** (Índice de Mora: **{ratio_mora:.1f}%**).")
             with st.expander("👁️ Ver Préstamos en Mora"):
                 st.dataframe(df_mora, use_container_width=True)
         else:
@@ -675,10 +556,7 @@ if opcion == "📊 Panel General":
 
     with col_a2:
         if not df_por_vencer.empty:
-            st.warning(
-                f"🔔 **Alerta Temprana:** **{len(df_por_vencer)} préstamo(s)**"
-                " vencerán en los próximos 30 días."
-            )
+            st.warning(f"🔔 **Alerta Temprana:** **{len(df_por_vencer)} préstamo(s)** vencerán en los próximos 30 días.")
             with st.expander("👁️ Ver Préstamos Próximos a Vencer"):
                 st.dataframe(df_por_vencer, use_container_width=True)
         else:
@@ -690,22 +568,13 @@ if opcion == "📊 Panel General":
         st.subheader("📊 Métricas Rápidas")
         st.info(f"👥 **Socios Activos:** {total_socios} socios registrados.")
     with col_dl2:
-        anio_exp = st.selectbox(
-            "Seleccionar año para filtro (Opcional):",
-            ["Todos"] + list(range(2020, 2101)),
-            index=0,
-        )
+        anio_exp = st.selectbox("Seleccionar año para filtro (Opcional):", ["Todos"] + list(range(2020, 2101)), index=0)
         anio_val = None if anio_exp == "Todos" else int(anio_exp)
         st.download_button(
             label="📦 Exportar Copia Completa (Excel)",
             data=exportar_consolidado_excel(anio_val),
-            file_name=(
-                "caja_ahorro_respaldo_"
-                f"{datetime.now().strftime('%Y%m%d')}.xlsx"
-            ),
-            mime=(
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            ),
+            file_name=f"caja_ahorro_respaldo_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
 # ==========================================
@@ -713,54 +582,28 @@ if opcion == "📊 Panel General":
 # ==========================================
 elif opcion == "👥 Socios":
     st.title("👥 Control de Socios")
-    tab1, tab2, tab3 = st.tabs(
-        [
-            "📋 Listado de Socios",
-            "➕ Registrar Nuevo Socio",
-            "✏️ Editar / Eliminar Socio",
-        ]
-    )
+    tab1, tab2, tab3 = st.tabs(["📋 Listado de Socios", "➕ Registrar Nuevo Socio", "✏️ Editar / Eliminar Socio"])
 
     with tab1:
         st.subheader("Socios Registrados")
         with motor.connect() as conn:
-            df_socios = pd.read_sql(
-                text(
-                    'SELECT id as "ID", nombre as "Nombre", telefono as'
-                    ' "Teléfono", fecha_registro as "Fecha Registro", estado as'
-                    ' "Estado" FROM socios ORDER BY id ASC'
-                ),
-                conn,
-            )
+            df_socios = pd.read_sql(text('SELECT id as "ID", nombre as "Nombre", telefono as "Teléfono", fecha_registro as "Fecha Registro", estado as "Estado" FROM socios ORDER BY id ASC'), conn)
         if not df_socios.empty:
-
             def crear_link_wa(tel):
                 if pd.notna(tel) and str(tel).strip() != "":
                     num_limpio = "".join(filter(str.isdigit, str(tel)))
                     if num_limpio:
-                        return (
-                            f'<a href="https://wa.me/{num_limpio}"'
-                            f' target="_blank">💬 Contactar WhatsApp ({tel})</a>'
-                        )
+                        return f'<a href="https://wa.me/{num_limpio}" target="_blank">💬 Contactar WhatsApp ({tel})</a>'
                 return "Sin teléfono"
 
             df_socios["Acción WhatsApp"] = df_socios["Teléfono"].apply(crear_link_wa)
-            st.write(
-                df_socios.to_html(escape=False, index=False),
-                unsafe_allow_html=True,
-            )
+            st.write(df_socios.to_html(escape=False, index=False), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
             st.download_button(
                 label="📥 Exportar Socios a Excel",
-                data=to_excel(
-                    df_socios.drop(columns=["Acción WhatsApp"], errors="ignore")
-                ),
-                file_name=(
-                    f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                ),
-                mime=(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                ),
+                data=to_excel(df_socios.drop(columns=["Acción WhatsApp"], errors="ignore")),
+                file_name=f"reporte_socios_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )
 
     with tab2:
@@ -776,18 +619,7 @@ elif opcion == "👥 Socios":
                 st.error("El nombre del socio es obligatorio.")
             else:
                 with motor.begin() as conn:
-                    conn.execute(
-                        text(
-                            "INSERT INTO socios (nombre, telefono,"
-                            " fecha_registro) VALUES (:nombre, :telefono,"
-                            " :fecha)"
-                        ),
-                        {
-                            "nombre": nombre,
-                            "telefono": telefono,
-                            "fecha": str(fecha_reg),
-                        },
-                    )
+                    conn.execute(text("INSERT INTO socios (nombre, telefono, fecha_registro) VALUES (:nombre, :telefono, :fecha)"), {"nombre": nombre, "telefono": telefono, "fecha": str(fecha_reg)})
                 registrar_bitacora(f"Registro de nuevo socio: {nombre}")
                 st.success(f"¡Socio '{nombre}' registrado correctamente!")
                 st.rerun()
@@ -795,43 +627,22 @@ elif opcion == "👥 Socios":
     with tab3:
         st.subheader("Modificar o Eliminar Socio")
         with motor.connect() as conn:
-            df_s_edit = pd.read_sql(
-                text(
-                    "SELECT id, nombre, telefono, fecha_registro, estado FROM"
-                    " socios ORDER BY id DESC"
-                ),
-                conn,
-            )
+            df_s_edit = pd.read_sql(text("SELECT id, nombre, telefono, fecha_registro, estado FROM socios ORDER BY id DESC"), conn)
 
         if df_s_edit.empty:
             st.info("No hay socios registrados para editar o eliminar.")
         else:
-            dict_s_edit = dict(
-                zip(
-                    [
-                        f"ID #{row['id']} - {row['nombre']}"
-                        for _, row in df_s_edit.iterrows()
-                    ],
-                    df_s_edit["id"],
-                )
-            )
+            dict_s_edit = dict(zip([f"ID #{row['id']} - {row['nombre']}" for _, row in df_s_edit.iterrows()], df_s_edit["id"]))
             socio_sel = st.selectbox("Selecciona el Socio:", list(dict_s_edit.keys()))
             id_socio_sel = dict_s_edit[socio_sel]
             datos_socio = df_s_edit[df_s_edit["id"] == id_socio_sel].iloc[0]
 
             with st.form("form_edit_socio"):
                 e_nombre = st.text_input("Nombre Completo", value=datos_socio["nombre"])
-                e_telefono = st.text_input(
-                    "Teléfono / WhatsApp",
-                    value=datos_socio["telefono"] or "",
-                )
+                e_telefono = st.text_input("Teléfono / WhatsApp", value=datos_socio["telefono"] or "")
                 fecha_orig = pd.to_datetime(datos_socio["fecha_registro"]).date()
                 e_fecha = st.date_input("Fecha de Registro", value=fecha_orig)
-                e_estado = st.selectbox(
-                    "Estado",
-                    ["Activo", "Inactivo"],
-                    index=0 if datos_socio["estado"] == "Activo" else 1,
-                )
+                e_estado = st.selectbox("Estado", ["Activo", "Inactivo"], index=0 if datos_socio["estado"] == "Activo" else 1)
 
                 col_b1, col_b2 = st.columns(2)
                 with col_b1:
@@ -841,57 +652,19 @@ elif opcion == "👥 Socios":
 
                 if btn_guardar_edit:
                     with motor.begin() as conn:
-                        conn.execute(
-                            text(
-                                "UPDATE socios SET nombre = :nombre,"
-                                " telefono = :telefono, fecha_registro ="
-                                " :fecha, estado = :estado WHERE id = :id"
-                            ),
-                            {
-                                "nombre": e_nombre,
-                                "telefono": e_telefono,
-                                "fecha": str(e_fecha),
-                                "estado": e_estado,
-                                "id": id_socio_sel,
-                            },
-                        )
-                    registrar_bitacora(
-                        "Actualización de datos del socio ID"
-                        f" {id_socio_sel}: {e_nombre}"
-                    )
+                        conn.execute(text("UPDATE socios SET nombre = :nombre, telefono = :telefono, fecha_registro = :fecha, estado = :estado WHERE id = :id"), {"nombre": e_nombre, "telefono": e_telefono, "fecha": str(e_fecha), "estado": e_estado, "id": id_socio_sel})
+                    registrar_bitacora(f"Actualización de datos del socio ID {id_socio_sel}: {e_nombre}")
                     st.success("¡Datos del socio actualizados exitosamente!")
                     st.rerun()
 
                 if btn_eliminar_socio:
                     with motor.begin() as conn:
-                        conn.execute(
-                            text(
-                                "DELETE FROM pagos WHERE prestamo_id IN"
-                                " (SELECT id FROM prestamos WHERE socio_id"
-                                " = :id)"
-                            ),
-                            {"id": id_socio_sel},
-                        )
-                        conn.execute(
-                            text("DELETE FROM prestamos WHERE socio_id = :id"),
-                            {"id": id_socio_sel},
-                        )
-                        conn.execute(
-                            text("DELETE FROM ahorros WHERE socio_id = :id"),
-                            {"id": id_socio_sel},
-                        )
-                        conn.execute(
-                            text("DELETE FROM socios WHERE id = :id"),
-                            {"id": id_socio_sel},
-                        )
-                    registrar_bitacora(
-                        f"Eliminación de socio ID {id_socio_sel}:"
-                        f" {datos_socio['nombre']}"
-                    )
-                    st.warning(
-                        f"Socio ID #{id_socio_sel} y sus registros"
-                        " vinculados han sido eliminados."
-                    )
+                        conn.execute(text("DELETE FROM pagos WHERE prestamo_id IN (SELECT id FROM prestamos WHERE socio_id = :id)"), {"id": id_socio_sel})
+                        conn.execute(text("DELETE FROM prestamos WHERE socio_id = :id"), {"id": id_socio_sel})
+                        conn.execute(text("DELETE FROM ahorros WHERE socio_id = :id"), {"id": id_socio_sel})
+                        conn.execute(text("DELETE FROM socios WHERE id = :id"), {"id": id_socio_sel})
+                    registrar_bitacora(f"Eliminación de socio ID {id_socio_sel}: {datos_socio['nombre']}")
+                    st.warning(f"Socio ID #{id_socio_sel} y sus registros vinculados han sido eliminados.")
                     st.rerun()
 
 # ==========================================
@@ -900,35 +673,19 @@ elif opcion == "👥 Socios":
 elif opcion == "💵 Ahorros y Cuotas":
     st.title("💵 Registro de Ahorros")
     with motor.connect() as conn:
-        df_socios = pd.read_sql(
-            text(
-                "SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY"
-                " nombre ASC"
-            ),
-            conn,
-        )
+        df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
 
     if df_socios.empty:
         st.warning("Primero debes registrar socios en la sección '👥 Socios'.")
     else:
-        tab1, tab2, tab3 = st.tabs(
-            [
-                "➕ Depositar Ahorro",
-                "📜 Historial de Ahorros",
-                "✏️ Editar / Corregir Ahorro",
-            ]
-        )
+        tab1, tab2, tab3 = st.tabs(["➕ Depositar Ahorro", "📜 Historial de Ahorros", "✏️ Editar / Corregir Ahorro"])
         dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
 
         with tab1:
             st.subheader("Registrar Nueva Aportación")
             with st.form("form_ahorro", clear_on_submit=True):
-                socio_nom = st.selectbox(
-                    "Selecciona el Socio *", list(dict_socios.keys())
-                )
-                monto_ahorro = st.number_input(
-                    "Monto Ahorrado (C$) *", min_value=1.0, step=10.0
-                )
+                socio_nom = st.selectbox("Selecciona el Socio *", list(dict_socios.keys()))
+                monto_ahorro = st.number_input("Monto Ahorrado (C$) *", min_value=1.0, step=10.0)
                 fecha_ahorro = st.date_input("Fecha del Depósito", datetime.now())
                 nota_ahorro = st.text_input("Nota / Observación (Opcional)")
                 btn_ahorro = st.form_submit_button("Registrar Depósito")
@@ -937,42 +694,15 @@ elif opcion == "💵 Ahorros y Cuotas":
                 socio_id = dict_socios[socio_nom]
                 anio_curr = fecha_ahorro.year
                 with motor.begin() as conn:
-                    conn.execute(
-                        text(
-                            "INSERT INTO ahorros (socio_id, monto, fecha,"
-                            " nota, anio) VALUES (:socio_id, :monto,"
-                            " :fecha, :nota, :anio)"
-                        ),
-                        {
-                            "socio_id": socio_id,
-                            "monto": monto_ahorro,
-                            "fecha": str(fecha_ahorro),
-                            "nota": nota_ahorro,
-                            "anio": anio_curr,
-                        },
-                    )
-                registrar_bitacora(
-                    f"Ahorro de C$ {monto_ahorro:,.2f} registrado para"
-                    f" {socio_nom}"
-                )
-                st.success(
-                    f"¡Ahorro de C$ {monto_ahorro:,.2f} registrado para"
-                    f" {socio_nom}!"
-                )
+                    conn.execute(text("INSERT INTO ahorros (socio_id, monto, fecha, nota, anio) VALUES (:socio_id, :monto, :fecha, :nota, :anio)"), {"socio_id": socio_id, "monto": monto_ahorro, "fecha": str(fecha_ahorro), "nota": nota_ahorro, "anio": anio_curr})
+                registrar_bitacora(f"Ahorro de C$ {monto_ahorro:,.2f} registrado para {socio_nom}")
+                st.success(f"¡Ahorro de C$ {monto_ahorro:,.2f} registrado para {socio_nom}!")
                 st.rerun()
 
         with tab2:
             st.subheader("Historial de Ahorros")
             with motor.connect() as conn:
-                df_ahorros_hist = pd.read_sql(
-                    text("""
-                    SELECT a.id, s.nombre as socio, a.monto, a.fecha, a.nota
-                    FROM ahorros a
-                    JOIN socios s ON a.socio_id = s.id
-                    ORDER BY a.fecha DESC
-                    """),
-                    conn,
-                )
+                df_ahorros_hist = pd.read_sql(text("SELECT a.id, s.nombre as socio, a.monto, a.fecha, a.nota FROM ahorros a JOIN socios s ON a.socio_id = s.id ORDER BY a.fecha DESC"), conn)
             if not df_ahorros_hist.empty:
                 st.dataframe(df_ahorros_hist, use_container_width=True)
             else:
@@ -981,38 +711,18 @@ elif opcion == "💵 Ahorros y Cuotas":
         with tab3:
             st.subheader("Editar / Eliminar Ahorro")
             with motor.connect() as conn:
-                df_a_edit = pd.read_sql(
-                    text("""
-                    SELECT a.id, s.nombre as socio, a.monto, a.fecha, a.nota, a.socio_id
-                    FROM ahorros a
-                    JOIN socios s ON a.socio_id = s.id
-                    ORDER BY a.id DESC
-                    """),
-                    conn,
-                )
+                df_a_edit = pd.read_sql(text("SELECT a.id, s.nombre as socio, a.monto, a.fecha, a.nota, a.socio_id FROM ahorros a JOIN socios s ON a.socio_id = s.id ORDER BY a.id DESC"), conn)
             if df_a_edit.empty:
                 st.info("No hay depósitos registrados para modificar.")
             else:
-                dict_a = {
-                    f"ID #{row['id']} - {row['socio']} (C$ {row['monto']:,.2f} - {row['fecha']})": row[
-                        "id"
-                    ]
-                    for _, row in df_a_edit.iterrows()
-                }
+                dict_a = {f"ID #{row['id']} - {row['socio']} (C$ {row['monto']:,.2f} - {row['fecha']})": row["id"] for _, row in df_a_edit.iterrows()}
                 ahorro_sel = st.selectbox("Selecciona Registro:", list(dict_a.keys()))
                 id_ahorro_sel = dict_a[ahorro_sel]
                 datos_a = df_a_edit[df_a_edit["id"] == id_ahorro_sel].iloc[0]
 
                 with st.form("form_edit_ahorro"):
-                    m_monto = st.number_input(
-                        "Monto (C$)",
-                        value=float(datos_a["monto"]),
-                        min_value=1.0,
-                    )
-                    m_fecha = st.date_input(
-                        "Fecha",
-                        value=pd.to_datetime(datos_a["fecha"]).date(),
-                    )
+                    m_monto = st.number_input("Monto (C$)", value=float(datos_a["monto"]), min_value=1.0)
+                    m_fecha = st.date_input("Fecha", value=pd.to_datetime(datos_a["fecha"]).date())
                     m_nota = st.text_input("Nota", value=datos_a["nota"] or "")
 
                     col_ea1, col_ea2 = st.columns(2)
@@ -1023,41 +733,23 @@ elif opcion == "💵 Ahorros y Cuotas":
 
                     if btn_up_a:
                         with motor.begin() as conn:
-                            conn.execute(
-                                text(
-                                    "UPDATE ahorros SET monto = :monto, fecha ="
-                                    " :fecha, nota = :nota WHERE id = :id"
-                                ),
-                                {
-                                    "monto": m_monto,
-                                    "fecha": str(m_fecha),
-                                    "nota": m_nota,
-                                    "id": id_ahorro_sel,
-                                },
-                            )
-                        registrar_bitacora(
-                            f"Actualización de ahorro ID {id_ahorro_sel}"
-                        )
+                            conn.execute(text("UPDATE ahorros SET monto = :monto, fecha = :fecha, nota = :nota WHERE id = :id"), {"monto": m_monto, "fecha": str(m_fecha), "nota": m_nota, "id": id_ahorro_sel})
+                        registrar_bitacora(f"Actualización de ahorro ID {id_ahorro_sel}")
                         st.success("¡Registro de ahorro actualizado!")
                         st.rerun()
 
                     if btn_del_a:
                         with motor.begin() as conn:
-                            conn.execute(
-                                text("DELETE FROM ahorros WHERE id = :id"),
-                                {"id": id_ahorro_sel},
-                            )
-                        registrar_bitacora(
-                            f"Eliminación de ahorro ID {id_ahorro_sel}"
-                        )
+                            conn.execute(text("DELETE FROM ahorros WHERE id = :id"), {"id": id_ahorro_sel})
+                        registrar_bitacora(f"Eliminación de ahorro ID {id_ahorro_sel}")
                         st.warning("Registro de ahorro eliminado.")
                         st.rerun()
 
 # ==========================================
-# SECCIÓN 4: PRÉSTAMOS
+# SECCIÓN 4: PRÉSTAMOS COMUNITARIOS
 # ==========================================
 elif opcion == "🤝 Préstamos":
-    st.title("🤝 Gestión de Préstamos")
+    st.title("🤝 Gestión de Préstamos Comunitarios")
     with motor.connect() as conn:
         df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
     
@@ -1086,10 +778,8 @@ elif opcion == "🤝 Préstamos":
                         conn.execute(text("""
                             INSERT INTO prestamos (socio_id, monto_prestado, tasa_interes, plazo_meses, interes_total, monto_total, fecha_inicio, anio)
                             VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi, :a)
-                        """), {
-                            "s": sid, "mp": m_prestado, "ti": t_interes, "pl": p_meses, "it": interes_tot, "mt": monto_tot, "fi": str(f_inicio), "a": anio_c
-                        })
-                    registrar_bitacora(f"Préstamo de C$ {monto_prestado:,.2f} otorgado a {soc_nom}")
+                        """), {"s": sid, "mp": m_prestado, "ti": t_interes, "pl": p_meses, "it": interes_tot, "mt": monto_tot, "fi": str(f_inicio), "a": anio_c})
+                    registrar_bitacora(f"Préstamo de C$ {m_prestado:,.2f} otorgado a {soc_nom}")
                     st.success("¡Préstamo registrado y aprobado con éxito!")
                     st.rerun()
                     
@@ -1152,15 +842,17 @@ elif opcion == "📖 Pagos de Préstamos":
                 registrar_bitacora(f"Pago de C$ {monto_pag:,.2f} registrado para Préstamo #{pid}")
                 st.success("¡Pago registrado con éxito!")
                 
-                pdf_bytes = generar_recibo_pdf(
+                pdf_bytes = generar_comprobante_generico_pdf(
+                    titulo_doc="CAJA DE AHORRO COMUNITARIO",
+                    subtitulo="Comprobante de Pago de Préstamo",
                     comprobante_id=f"RECIBO-COM-{pid}",
                     fecha=str(f_pag),
-                    socio=pres_sel.split("-")[1].split("(")[0].strip(),
-                    prestamo_ref=f"Préstamo Comunitario #{pid}",
-                    monto_total=monto_pag,
-                    monto_capital=m_cap,
-                    monto_interes=m_int,
-                    capital_pendiente=0.0
+                    persona=pres_sel.split("-")[1].split("(")[0].strip(),
+                    detalles_dict={
+                        "Abono Capital": f"C$ {m_cap:,.2f}",
+                        "Pago Interés": f"C$ {m_int:,.2f}",
+                        "TOTAL RECIBIDO": f"C$ {monto_pag:,.2f}"
+                    }
                 )
                 st.download_button(
                     label="📄 Descargar Recibo Oficial en PDF",
@@ -1222,26 +914,124 @@ elif opcion == "📜 Estado de Cuenta":
         st.dataframe(prest_soc, use_container_width=True)
 
 # ==========================================
-# SECCIÓN 9: LIQUIDACIÓN ANUAL
+# SECCIÓN 9: LIQUIDACIÓN ANUAL DETALLADA
 # ==========================================
 elif opcion == "🎉 Liquidación Anual":
-    st.title("🎉 Liquidación Anual de Intereses y Ahorros")
+    st.title("🎉 Liquidación Anual de Intereses y Ahorros por Socio")
+    st.caption("Distribución proporcional de ganancias basadas en los depósitos y meses de ahorro de cada socio.")
+
     anio_liq = st.selectbox("Seleccionar Año a Liquidar", [2024, 2025, 2026, 2027], index=2)
-    
+
     with motor.connect() as conn:
-        tot_ah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM ahorros WHERE anio = :a"), conn, params={"a": anio_liq})["t"].iloc[0]
-        tot_int = pd.read_sql(text("SELECT COALESCE(SUM(interes_total), 0) as t FROM prestamos WHERE anio = :a"), conn, params={"a": anio_liq})["t"].iloc[0]
-    
+        tot_ah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM ahorros WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})["t"].iloc[0]
+        tot_int = pd.read_sql(text("SELECT COALESCE(SUM(monto_interes), 0) as t FROM pagos WHERE EXTRACT(YEAR FROM fecha) = :a"), conn, params={"a": anio_liq})["t"].iloc[0]
+
+        query_liq_socios = """
+            SELECT 
+                s.id as socio_id,
+                s.nombre as socio,
+                COALESCE(SUM(a.monto), 0) as total_ahorrado,
+                COUNT(DISTINCT EXTRACT(MONTH FROM a.fecha)) as meses_con_ahorro
+            FROM socios s
+            LEFT JOIN ahorros a ON s.id = a.socio_id AND EXTRACT(YEAR FROM a.fecha) = :a
+            WHERE s.estado = 'Activo'
+            GROUP BY s.id, s.nombre
+            HAVING COALESCE(SUM(a.monto), 0) > 0
+            ORDER BY s.nombre ASC
+        """
+        df_liq_socios = pd.read_sql(text(query_liq_socios), conn, params={"a": anio_liq})
+
     col1, col2 = st.columns(2)
-    col1.metric(f"Total Ahorros ({anio_liq})", f"C$ {float(tot_ah):,.2f}")
-    col2.metric(f"Total Intereses Generados ({anio_liq})", f"C$ {float(tot_int):,.2f}")
+    col1.metric(f"💰 Total Ahorros ({anio_liq})", f"C$ {float(tot_ah):,.2f}")
+    col2.metric(f"📈 Total Intereses a Repartir ({anio_liq})", f"C$ {float(tot_int):,.2f}")
+
+    st.markdown("---")
+    st.subheader(f"📋 Desglose de Liquidación por Socio ({anio_liq})")
+
+    if not df_liq_socios.empty and float(tot_ah) > 0:
+        df_liq_socios["total_ahorrado"] = df_liq_socios["total_ahorrado"].astype(float)
+        df_liq_socios["porcentaje_participacion"] = (df_liq_socios["total_ahorrado"] / float(tot_ah)) * 100
+        df_liq_socios["interes_ganado"] = (df_liq_socios["total_ahorrado"] / float(tot_ah)) * float(tot_int)
+        df_liq_socios["monto_total_recibir"] = df_liq_socios["total_ahorrado"] + df_liq_socios["interes_ganado"]
+
+        df_mostrar = df_liq_socios.rename(columns={
+            "socio": "Socio",
+            "total_ahorrado": "Total Ahorrado (C$)",
+            "meses_con_ahorro": "Meses Ahorrados",
+            "porcentaje_participacion": "Participación (%)",
+            "interes_ganado": "Interés Ganado (C$)",
+            "monto_total_recibir": "Total a Liquidar (C$)"
+        })
+
+        st.dataframe(
+            df_mostrar[["Socio", "Total Ahorrado (C$)", "Meses Ahorrados", "Participación (%)", "Interés Ganado (C$)", "Total a Liquidar (C$)"]],
+            use_container_width=True
+        )
+
+        st.download_button(
+            label="📥 Exportar Reporte de Liquidación (Excel)",
+            data=to_excel(df_mostrar),
+            file_name=f"liquidacion_anual_{anio_liq}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+    else:
+        st.info(f"No hay registros de ahorros o movimiento de liquidación para el año {anio_liq}.")
 
 # ==========================================
 # SECCIÓN 10: CIERRE MENSUAL Y ANUAL
 # ==========================================
-elif opc_cierre := opcion == "📅 Cierre Mensual y Anual":
-    st.title("📅 Cierres Contables")
-    st.info("Módulo de auditoría y cierre contable habilitado para la administración general.")
+elif opcion == "📅 Cierre Mensual y Anual":
+    st.title("📅 Cierres Contables Mensuales y Anuales")
+    st.caption("Módulo para verificar saldos, congelar periodos contables y guardar históricos de caja.")
+
+    col_m, col_a = st.columns(2)
+    with col_m:
+        meses_dict = {
+            1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio",
+            7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"
+        }
+        mes_sel = st.selectbox("Seleccionar Mes del Cierre", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1)
+    with col_a:
+        anio_sel = st.selectbox("Seleccionar Año del Cierre", [2024, 2025, 2026, 2027], index=2)
+
+    st.markdown(f"### 📊 Resumen Mensual: {meses_dict[mes_sel]} {anio_sel}")
+
+    with motor.connect() as conn:
+        m_ahorros = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM ahorros WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": mes_sel, "a": anio_sel})["t"].iloc[0]
+        m_prestamos = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM prestamos WHERE EXTRACT(MONTH FROM fecha_inicio) = :m AND EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"m": mes_sel, "a": anio_sel})["t"].iloc[0]
+        m_pagos = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM pagos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": mes_sel, "a": anio_sel})["t"].iloc[0]
+        m_egresos = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": mes_sel, "a": anio_sel})["t"].iloc[0]
+
+        balance_mes = (float(m_ahorros) + float(m_pagos)) - (float(m_prestamos) + float(m_egresos))
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("💵 Ahorros del Mes", f"C$ {float(m_ahorros):,.2f}")
+    c2.metric("📉 Préstamos Otorgados", f"C$ {float(m_prestamos):,.2f}")
+    c3.metric("📥 Cobros / Abonos", f"C$ {float(m_pagos):,.2f}")
+    c4.metric("💸 Egresos / Gastos", f"C$ {float(m_egresos):,.2f}")
+
+    st.metric("🏦 Balance Flujo Neto del Mes", f"C$ {balance_mes:,.2f}")
+
+    st.markdown("---")
+    if st.button(f"🔒 Confirmar y Procesar Cierre de {meses_dict[mes_sel]} {anio_sel}"):
+        with motor.begin() as conn:
+            conn.execute(text("""
+                INSERT INTO cierres_anuales (anio, total_ahorrado, total_intereses)
+                VALUES (:a, :ta, :ti)
+            """), {"a": anio_sel, "ta": float(m_ahorros), "ti": float(m_pagos)})
+        registrar_bitacora(f"Cierre contable realizado para {meses_dict[mes_sel]} {anio_sel}")
+        st.success(f"¡Cierre contable de {meses_dict[mes_sel]} {anio_sel} registrado correctamente!")
+        st.rerun()
+
+    st.markdown("---")
+    st.subheader("📜 Histórico de Cierres Contables Procesados")
+    with motor.connect() as conn:
+        df_cierres_hist = pd.read_sql(text("SELECT id as \"ID\", anio as \"Año\", total_ahorrado as \"Total Ahorrado\", total_intereses as \"Total Ingresos\", fecha_cierre as \"Fecha de Registro\" FROM cierres_anuales ORDER BY fecha_cierre DESC"), conn)
+    
+    if not df_cierres_hist.empty:
+        st.dataframe(df_cierres_hist, use_container_width=True)
+    else:
+        st.info("Aún no se han guardado cierres contables.")
 
 # ==========================================
 # SECCIÓN 11: BITÁCORA DE AUDITORÍA
@@ -1256,11 +1046,11 @@ elif opcion == "🛡️ Bitácora de Auditoría":
         st.info("La bitácora está vacía.")
 
 # ==========================================
-# SECCIÓN 12: MIS PROYECTOS PERSONALES (CON PANEL GENERAL)
+# SECCIÓN 12: MIS PROYECTOS PERSONALES (POTENCIADO CON PDFS Y CIERRES MENSUALES)
 # ==========================================
 elif opcion == "📂 Mis Proyectos Personales":
     st.title("📂 Espacio de Uso Personal y Préstamos Privados")
-    st.caption("Gestión independiente de clientes, préstamos personales, ahorros y gastos propios.")
+    st.caption("Gestión independiente de clientes, préstamos personales, ahorros, gastos propios y reportes PDF.")
 
     p_opcion = st.radio(
         "Selecciona una herramienta personal:",
@@ -1277,6 +1067,8 @@ elif opcion == "📂 Mis Proyectos Personales":
         horizontal=True
     )
     st.markdown("---")
+
+    meses_dict = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 
     # PANEL GENERAL PERSONAL
     if p_opcion == "📊 Panel General Personal":
@@ -1324,14 +1116,27 @@ elif opcion == "📂 Mis Proyectos Personales":
                     else:
                         st.error("El nombre es obligatorio.")
 
-    # 2. AHORROS PERSONALES
+    # 2. AHORROS PERSONALES (CON ACTUALIZACIÓN MENSUAL Y RECIBOS PDF)
     elif p_opcion == "💵 Ahorros Personales":
-        st.subheader("Depósitos de Ahorro Personal")
+        st.subheader("Depósitos y Ahorro Personal (Resumen Mensual y Recibos PDF)")
+        
+        col_m, col_a = st.columns(2)
+        with col_m:
+            m_ah = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_ah")
+        with col_a:
+            a_ah = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_ah")
+
+        with motor.connect() as conn:
+            tot_mes_ah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_ah, "a": a_ah})["t"].iloc[0]
+        
+        st.metric(f"💵 Total Ahorrado en {meses_dict[m_ah]} {a_ah}", f"C$ {float(tot_mes_ah):,.2f}")
+        st.markdown("---")
+
         with motor.connect() as conn:
             df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
         
         if df_psoc.empty:
-            st.warning("Primero registra un cliente/socio en la pestaña anterior.")
+            st.warning("Primero registra un cliente/socio.")
         else:
             dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
             with st.form("form_pahorro", clear_on_submit=True):
@@ -1339,23 +1144,46 @@ elif opcion == "📂 Mis Proyectos Personales":
                 pmonto = st.number_input("Monto del Ahorro (C$)", min_value=1.0, step=10.0)
                 pfech = st.date_input("Fecha", datetime.now())
                 pnote = st.text_input("Nota u Observación")
-                pbtn_ah = st.form_submit_button("Registrar Ahorro Personal")
+                pbtn_ah = st.form_submit_button("Registrar Ahorro y Generar Recibo PDF")
                 
                 if pbtn_ah:
                     sid = dict_ps[psel]
                     with motor.begin() as conn:
-                        conn.execute(text("INSERT INTO personal_ahorros (socio_id, monto, fecha, nota) VALUES (:s, :m, :f, :n)"), {"s": sid, "m": pmonto, "f": str(pfech), "n": pnote})
+                        res = conn.execute(text("INSERT INTO personal_ahorros (socio_id, monto, fecha, nota) VALUES (:s, :m, :f, :n) RETURNING id"), {"s": sid, "m": pmonto, "f": str(pfech), "n": pnote})
+                        new_id = res.fetchone()[0]
                     st.success("¡Ahorro personal registrado correctamente!")
-                    st.rerun()
-            
+                    
+                    pdf_ahorro = generar_comprobante_generico_pdf(
+                        titulo_doc="PROYECTOS PERSONALES",
+                        subtitulo="Comprobante de Depósito de Ahorro",
+                        comprobante_id=f"RECIBO-AHORRO-PER-{new_id}",
+                        fecha=str(pfech),
+                        persona=psel,
+                        detalles_dict={"Monto Depósito": f"C$ {pmonto:,.2f}", "Observación": pnote or "Sin notas"}
+                    )
+                    st.download_button("📄 Descargar Recibo de Ahorro PDF", pdf_ahorro, f"recibo_ahorro_{new_id}.pdf", "application/pdf")
+
             with motor.connect() as conn:
-                df_pah_hist = pd.read_sql(text("SELECT a.id, s.nombre as cliente, a.monto, a.fecha, a.nota FROM personal_ahorros a JOIN personal_socios s ON a.socio_id = s.id ORDER BY a.fecha DESC"), conn)
+                df_pah_hist = pd.read_sql(text("SELECT a.id, s.nombre as cliente, a.monto, a.fecha, a.nota FROM personal_ahorros a JOIN personal_socios s ON a.socio_id = s.id WHERE EXTRACT(MONTH FROM a.fecha) = :m AND EXTRACT(YEAR FROM a.fecha) = :a ORDER BY a.fecha DESC"), conn, params={"m": m_ah, "a": a_ah})
             if not df_pah_hist.empty:
                 st.dataframe(df_pah_hist, use_container_width=True)
 
-    # 3. PRÉSTAMOS PERSONALES
+    # 3. PRÉSTAMOS PERSONALES (CON RESUMEN/CIERRE MENSUAL Y PDF)
     elif p_opcion == "🤝 Préstamos Personales":
-        st.subheader("Otorgar Préstamo Personal")
+        st.subheader("Otorgar Préstamo Personal (Cierre Mensual y Comprobante PDF)")
+        
+        col_m, col_a = st.columns(2)
+        with col_m:
+            m_pr = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_pr")
+        with col_a:
+            a_pr = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_pr")
+
+        with motor.connect() as conn:
+            tot_mes_pr = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE EXTRACT(MONTH FROM fecha_inicio) = :m AND EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"m": m_pr, "a": a_pr})["t"].iloc[0]
+        
+        st.metric(f"📉 Total Préstamos Otorgados en {meses_dict[m_pr]} {a_pr}", f"C$ {float(tot_mes_pr):,.2f}")
+        st.markdown("---")
+
         with motor.connect() as conn:
             df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
         
@@ -1369,24 +1197,37 @@ elif opcion == "📂 Mis Proyectos Personales":
                 ptasa = st.number_input("Tasa de Interés Mensual (%)", min_value=0.0, value=5.0)
                 pplazo = st.number_input("Plazo (Meses)", min_value=1, value=12, step=1)
                 pfech_ini = st.date_input("Fecha de Inicio", datetime.now())
-                pbtn_prest = st.form_submit_button("Crear Préstamo Personal")
+                pbtn_prest = st.form_submit_button("Crear Préstamo y Generar Pagaré PDF")
                 
                 if pbtn_prest:
                     sid = dict_ps[psoc]
                     interes_tot = pmonto_p * (ptasa / 100.0) * pplazo
                     monto_tot = pmonto_p + interes_tot
                     with motor.begin() as conn:
-                        conn.execute(text("""
+                        res = conn.execute(text("""
                             INSERT INTO personal_prestamos (socio_id, monto_prestado, tasa_interes, plazo_meses, interes_total, monto_total, fecha_inicio)
-                            VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi)
-                        """), {
-                            "s": sid, "mp": pmonto_p, "ti": ptasa, "pl": pplazo, "it": interes_tot, "mt": monto_tot, "fi": str(pfech_ini)
-                        })
-                    st.success("¡Préstamo personal creado con éxito!")
-                    st.rerun()
+                            VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi) RETURNING id
+                        """), {"s": sid, "mp": pmonto_p, "ti": ptasa, "pl": pplazo, "it": interes_tot, "mt": monto_tot, "fi": str(pfech_ini)})
+                        new_pr_id = res.fetchone()[0]
+                    st.success("¡Préstamo personal registrado correctamente!")
+                    
+                    pdf_prestamo = generar_comprobante_generico_pdf(
+                        titulo_doc="PROYECTOS PERSONALES",
+                        subtitulo="Comprobante de Préstamo Otorgado",
+                        comprobante_id=f"PRESTAMO-PER-{new_pr_id}",
+                        fecha=str(pfech_ini),
+                        persona=psoc,
+                        detalles_dict={
+                            "Monto Capital": f"C$ {pmonto_p:,.2f}",
+                            "Tasa Interés": f"{ptasa}% mensual",
+                            "Plazo": f"{pplazo} meses",
+                            "TOTAL A CANCELAR": f"C$ {monto_tot:,.2f}"
+                        }
+                    )
+                    st.download_button("📄 Descargar Comprobante Préstamo PDF", pdf_prestamo, f"prestamo_personal_{new_pr_id}.pdf", "application/pdf")
 
             with motor.connect() as conn:
-                df_pp_hist = pd.read_sql(text("SELECT p.id, s.nombre as cliente, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id ORDER BY p.id DESC"), conn)
+                df_pp_hist = pd.read_sql(text("SELECT p.id, s.nombre as cliente, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :m AND EXTRACT(YEAR FROM p.fecha_inicio) = :a ORDER BY p.id DESC"), conn, params={"m": m_pr, "a": a_pr})
             if not df_pp_hist.empty:
                 st.dataframe(df_pp_hist, use_container_width=True)
 
@@ -1408,9 +1249,22 @@ elif opcion == "📂 Mis Proyectos Personales":
             c2.metric("Interés Total", f"C$ {interes_mes * s_plazo:,.2f}")
             c3.metric("Monto Total a Pagar", f"C$ {total_pagar:,.2f}")
 
-    # 5. PAGOS Y RECIBOS PERSONALES
+    # 5. PAGOS Y RECIBOS PERSONALES (ACTUALIZACIÓN MENSUAL Y RECIBO PDF)
     elif p_opcion == "📖 Pagos y Recibos Personales":
-        st.subheader("Registrar Abono / Pago y Generar Recibo PDF")
+        st.subheader("Registrar Abono / Pago y Generar Recibo PDF (Resumen Mensual)")
+        
+        col_m, col_a = st.columns(2)
+        with col_m:
+            m_pg = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_pg")
+        with col_a:
+            a_pg = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_pg")
+
+        with motor.connect() as conn:
+            tot_mes_pg = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_pg, "a": a_pg})["t"].iloc[0]
+        
+        st.metric(f"📥 Total Cobros Recaudados en {meses_dict[m_pg]} {a_pg}", f"C$ {float(tot_mes_pg):,.2f}")
+        st.markdown("---")
+
         with motor.connect() as conn:
             df_pactivo = pd.read_sql(text("SELECT p.id, s.nombre, p.monto_total FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE p.estado = 'Activo'"), conn)
         
@@ -1426,60 +1280,77 @@ elif opcion == "📂 Mis Proyectos Personales":
                 m_cap = st.number_input("Aplicado a Capital (C$)", min_value=0.0, step=10.0)
                 m_int = st.number_input("Aplicado a Interés (C$)", min_value=0.0, step=10.0)
                 f_pago = st.date_input("Fecha de Pago", datetime.now())
-                b_pago = st.form_submit_button("Registrar Pago y Generar Recibo")
+                b_pago = st.form_submit_button("Registrar Pago y Generar Recibo PDF")
                 
                 if b_pago:
                     with motor.begin() as conn:
-                        conn.execute(text("""
+                        res = conn.execute(text("""
                             INSERT INTO personal_pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
-                            VALUES (:pid, :mp, :mc, :mi, :f, 'Abono')
+                            VALUES (:pid, :mp, :mc, :mi, :f, 'Abono') RETURNING id
                         """), {"pid": pid_sel, "mp": m_pagado, "mc": m_cap, "mi": m_int, "f": str(f_pago)})
+                        new_pago_id = res.fetchone()[0]
                     st.success("¡Pago registrado con éxito!")
                     
-                    pdf_bytes = generar_recibo_pdf(
-                        comprobante_id=f"RECIBO-PER-{pid_sel}",
+                    pdf_bytes = generar_comprobante_generico_pdf(
+                        titulo_doc="PROYECTOS PERSONALES",
+                        subtitulo="Comprobante Oficial de Pago",
+                        comprobante_id=f"RECIBO-PAGO-PER-{new_pago_id}",
                         fecha=str(f_pago),
-                        socio=sel_p.split("-")[1].split("(")[0].strip(),
-                        prestamo_ref=f"Préstamo Personal #{pid_sel}",
-                        monto_total=m_pagado,
-                        monto_capital=m_cap,
-                        monto_interes=m_int,
-                        capital_pendiente=0.0
+                        persona=sel_p.split("-")[1].split("(")[0].strip(),
+                        detalles_dict={"Abono a Capital": f"C$ {m_cap:,.2f}", "Pago de Interés": f"C$ {m_int:,.2f}", "TOTAL RECIBIDO": f"C$ {m_pagado:,.2f}"}
                     )
-                    st.download_button(
-                        label="📄 Descargar Recibo Oficial en PDF",
-                        data=pdf_bytes,
-                        file_name=f"recibo_personal_{pid_sel}.pdf",
-                        mime="application/pdf"
-                    )
+                    st.download_button("📄 Descargar Recibo Oficial en PDF", pdf_bytes, f"recibo_pago_personal_{new_pago_id}.pdf", "application/pdf")
 
-    # 6. EGRESOS Y GASTOS PERSONALES
+    # 6. EGRESOS Y GASTOS PERSONALES (CON ACTUALIZACIÓN MENSUAL Y VÁLVULA PDF)
     elif p_opcion == "💸 Egresos y Gastos Personales":
-        st.subheader("Control de Gastos y Egresos Personales")
+        st.subheader("Control de Gastos y Egresos Personales (Resumen Mensual y Comprobante PDF)")
+        
+        col_m, col_a = st.columns(2)
+        with col_m:
+            m_eg = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_eg")
+        with col_a:
+            a_eg = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_eg")
+
+        with motor.connect() as conn:
+            tot_mes_eg = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_eg, "a": a_eg})["t"].iloc[0]
+        
+        st.metric(f"💸 Total Gastos en {meses_dict[m_eg]} {a_eg}", f"C$ {float(tot_mes_eg):,.2f}")
+        st.markdown("---")
+
         with st.form("form_pegresos", clear_on_submit=True):
             concepto = st.text_input("Concepto del Gasto *")
             monto_eg = st.number_input("Monto (C$)", min_value=1.0, step=10.0)
             fecha_eg = st.date_input("Fecha", datetime.now())
             resp = st.text_input("Responsable / Nota", value="Personal")
-            btn_eg = st.form_submit_button("Guardar Gasto")
+            btn_eg = st.form_submit_button("Guardar Gasto y Generar Comprobante PDF")
             
             if btn_eg:
                 if concepto.strip():
                     with motor.begin() as conn:
-                        conn.execute(text("INSERT INTO personal_egresos (concepto, monto, fecha, responsable) VALUES (:c, :m, :f, :r)"), {"c": concepto, "m": monto_eg, "f": str(fecha_eg), "r": resp})
+                        res = conn.execute(text("INSERT INTO personal_egresos (concepto, monto, fecha, responsable) VALUES (:c, :m, :f, :r) RETURNING id"), {"c": concepto, "m": monto_eg, "f": str(fecha_eg), "r": resp})
+                        new_eg_id = res.fetchone()[0]
                     st.success("¡Gasto registrado correctamente!")
-                    st.rerun()
+                    
+                    pdf_egreso = generar_comprobante_generico_pdf(
+                        titulo_doc="PROYECTOS PERSONALES",
+                        subtitulo="Comprobante de Egreso / Gasto",
+                        comprobante_id=f"EGRESO-PER-{new_eg_id}",
+                        fecha=str(fecha_eg),
+                        persona=resp,
+                        detalles_dict={"Concepto": concepto, "Monto Egreso": f"C$ {monto_eg:,.2f}"}
+                    )
+                    st.download_button("📄 Descargar Comprobante Egreso PDF", pdf_egreso, f"egreso_personal_{new_eg_id}.pdf", "application/pdf")
                 else:
                     st.error("El concepto es obligatorio.")
 
         with motor.connect() as conn:
-            df_eg_hist = pd.read_sql(text("SELECT id as \"ID\", concepto as \"Concepto\", monto as \"Monto\", fecha as \"Fecha\", responsable as \"Responsable\" FROM personal_egresos ORDER BY fecha DESC"), conn)
+            df_eg_hist = pd.read_sql(text("SELECT id as \"ID\", concepto as \"Concepto\", monto as \"Monto\", fecha as \"Fecha\", responsable as \"Responsable\" FROM personal_egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a ORDER BY fecha DESC"), conn, params={"m": m_eg, "a": a_eg})
         if not df_eg_hist.empty:
             st.dataframe(df_eg_hist, use_container_width=True)
 
-    # 7. ESTADO DE CUENTA PERSONAL
+    # 7. ESTADO DE CUENTA PERSONAL (CON DESCARGA COMPLETA EN PDF)
     elif p_opcion == "📜 Estado de Cuenta Personal":
-        st.subheader("Estado de Cuenta Consolidado (Personal)")
+        st.subheader("Estado de Cuenta Consolidado Personal (Descarga PDF)")
         with motor.connect() as conn:
             df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
         
@@ -1498,3 +1369,6 @@ elif opcion == "📂 Mis Proyectos Personales":
             st.dataframe(ah_p, use_container_width=True)
             st.markdown("### Préstamos del Cliente")
             st.dataframe(pr_p, use_container_width=True)
+
+            pdf_ec = generar_estado_cuenta_pdf(cliente=psel, df_ahorros=ah_p, df_prestamos=pr_p)
+            st.download_button("📄 Descargar Estado de Cuenta Completo en PDF", pdf_ec, f"estado_cuenta_{sid}.pdf", "application/pdf")
