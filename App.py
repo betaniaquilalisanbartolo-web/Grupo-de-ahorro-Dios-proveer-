@@ -58,7 +58,6 @@ def verificar_contrasena(contrasena_ingresada: str, hash_almacenado: str) -> boo
 
 def init_db():
     with motor.begin() as conn:
-        # Configuración de sistema / credenciales
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS configuracion (
@@ -81,7 +80,7 @@ def init_db():
                 {"val": pass_default_hash},
             )
 
-        # Socios Comunitarios
+        # Tablas Comunitarias
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS socios (
@@ -94,7 +93,6 @@ def init_db():
         """)
         )
 
-        # Ahorros Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS ahorros (
@@ -108,7 +106,6 @@ def init_db():
         """)
         )
 
-        # Préstamos Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS prestamos (
@@ -126,7 +123,6 @@ def init_db():
         """)
         )
 
-        # Pagos Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS pagos (
@@ -141,7 +137,6 @@ def init_db():
         """)
         )
 
-        # Egresos Comunitarios
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS egresos (
@@ -154,7 +149,6 @@ def init_db():
         """)
         )
 
-        # Cierres Anuales y Bitácora
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS cierres_anuales (
@@ -178,9 +172,7 @@ def init_db():
         """)
         )
 
-        # ==========================================
-        # TABLAS INDEPENDIENTES PARA PROYECTOS PERSONALES
-        # ==========================================
+        # Tablas Personales Independientes
         conn.execute(
             text("""
             CREATE TABLE IF NOT EXISTS personal_socios (
@@ -297,7 +289,6 @@ def generar_recibo_pdf(
     monto_interes: float,
     capital_pendiente: float,
 ) -> bytes:
-    """Genera un archivo PDF elegante del recibo oficial de pago usando ReportLab."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -353,7 +344,6 @@ def generar_recibo_pdf(
     )
 
     story = []
-
     story.append(Paragraph("<b>COMPROBANTE OFICIAL</b>", style_header))
     story.append(Paragraph("Recibo de Pago", style_sub))
     story.append(Spacer(1, 10))
@@ -363,7 +353,6 @@ def generar_recibo_pdf(
         )
     )
     story.append(Spacer(1, 15))
-
     story.append(Paragraph(f"<b>{comprobante_id}</b>", style_title_recibo))
     story.append(Spacer(1, 10))
 
@@ -587,7 +576,7 @@ opcion = st.sidebar.radio(
 )
 
 # ==========================================
-# SECCIÓN 1: PANEL GENERAL (DASHBOARD)
+# SECCIÓN 1: PANEL GENERAL (COMUNITARIO)
 # ==========================================
 if opcion == "📊 Panel General":
     st.title("📊 Panel General de la Caja de Ahorro")
@@ -720,7 +709,7 @@ if opcion == "📊 Panel General":
         )
 
 # ==========================================
-# SECCIÓN 2: GESTIÓN DE SOCIOS COMUNITARIOS
+# SECCIÓN 2: GESTIÓN DE SOCIOS
 # ==========================================
 elif opcion == "👥 Socios":
     st.title("👥 Control de Socios")
@@ -906,7 +895,7 @@ elif opcion == "👥 Socios":
                     st.rerun()
 
 # ==========================================
-# SECCIÓN 3: AHORROS Y CUOTAS COMUNITARIAS
+# SECCIÓN 3: AHORROS Y CUOTAS
 # ==========================================
 elif opcion == "💵 Ahorros y Cuotas":
     st.title("💵 Registro de Ahorros")
@@ -1065,7 +1054,209 @@ elif opcion == "💵 Ahorros y Cuotas":
                         st.rerun()
 
 # ==========================================
-# SECCIÓN: MIS PROYECTOS PERSONALES (ESTRUCTURA COMPLETA SIMILAR)
+# SECCIÓN 4: PRÉSTAMOS
+# ==========================================
+elif opcion == "🤝 Préstamos":
+    st.title("🤝 Gestión de Préstamos")
+    with motor.connect() as conn:
+        df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo' ORDER BY nombre ASC"), conn)
+    
+    if df_socios.empty:
+        st.warning("Debe registrar socios activos para otorgar préstamos.")
+    else:
+        tab1, tab2 = st.tabs(["➕ Otorgar Préstamo", "📋 Cartera de Préstamos Activos"])
+        dict_socios = dict(zip(df_socios["nombre"], df_socios["id"]))
+        
+        with tab1:
+            with st.form("form_prestamo", clear_on_submit=True):
+                soc_nom = st.selectbox("Seleccionar Socio *", list(dict_socios.keys()))
+                m_prestado = st.number_input("Monto Prestado (C$) *", min_value=100.0, step=100.0)
+                t_interes = st.number_input("Tasa de Interés Mensual (%) *", min_value=0.0, value=5.0, step=0.5)
+                p_meses = st.number_input("Plazo en Meses *", min_value=1, value=12, step=1)
+                f_inicio = st.date_input("Fecha de Inicio", datetime.now())
+                btn_p = st.form_submit_button("Aprobar y Registrar Préstamo")
+                
+                if btn_p:
+                    sid = dict_socios[soc_nom]
+                    interes_tot = m_prestado * (t_interes / 100.0) * p_meses
+                    monto_tot = m_prestado + interes_tot
+                    anio_c = f_inicio.year
+                    
+                    with motor.begin() as conn:
+                        conn.execute(text("""
+                            INSERT INTO prestamos (socio_id, monto_prestado, tasa_interes, plazo_meses, interes_total, monto_total, fecha_inicio, anio)
+                            VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi, :a)
+                        """), {
+                            "s": sid, "mp": m_prestado, "ti": t_interes, "pl": p_meses, "it": interes_tot, "mt": monto_tot, "fi": str(f_inicio), "a": anio_c
+                        })
+                    registrar_bitacora(f"Préstamo de C$ {monto_prestado:,.2f} otorgado a {soc_nom}")
+                    st.success("¡Préstamo registrado y aprobado con éxito!")
+                    st.rerun()
+                    
+        with tab2:
+            with motor.connect() as conn:
+                df_p_act = pd.read_sql(text("SELECT p.id, s.nombre as socio, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM prestamos p JOIN socios s ON p.socio_id = s.id ORDER BY p.id DESC"), conn)
+            if not df_p_act.empty:
+                st.dataframe(df_p_act, use_container_width=True)
+            else:
+                st.info("No hay préstamos registrados.")
+
+# ==========================================
+# SECCIÓN 5: SIMULADOR DE PRÉSTAMOS
+# ==========================================
+elif opcion == "🧮 Simulador de Préstamos":
+    st.title("🧮 Simulador Financiero de Préstamos")
+    sim_monto = st.number_input("Monto a solicitar (C$)", min_value=100.0, value=10000.0, step=500.0)
+    sim_tasa = st.number_input("Tasa de interés mensual (%)", min_value=0.0, value=5.0, step=0.5)
+    sim_plazo = st.number_input("Plazo en meses", min_value=1, value=12, step=1)
+    
+    if st.button("Calcular Proyección"):
+        interes_mensual = sim_monto * (sim_tasa / 100.0)
+        capital_mensual = sim_monto / sim_plazo
+        cuota_total = interes_mensual + capital_mensual
+        monto_total_pagar = sim_monto + (interes_mensual * sim_plazo)
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Cuota Mensual Estimada", f"C$ {cuota_total:,.2f}")
+        c2.metric("Interés Total Generado", f"C$ {interes_mensual * sim_plazo:,.2f}")
+        c3.metric("Monto Total a Cancelar", f"C$ {monto_total_pagar:,.2f}")
+
+# ==========================================
+# SECCIÓN 6: PAGOS DE PRÉSTAMOS
+# ==========================================
+elif opcion == "📖 Pagos de Préstamos":
+    st.title("📖 Registro de Pagos y Abonos")
+    with motor.connect() as conn:
+        df_prest_activos = pd.read_sql(text("SELECT p.id, s.nombre, p.monto_total FROM prestamos p JOIN socios s ON p.socio_id = s.id WHERE p.estado = 'Activo'"), conn)
+        
+    if df_prest_activos.empty:
+        st.info("No hay préstamos activos para recibir pagos.")
+    else:
+        dict_pres = {f"Préstamo #{row['id']} - {row['nombre']} (Total: C$ {row['monto_total']:,.2f})": row['id'] for _, row in df_prest_activos.iterrows()}
+        pres_sel = st.selectbox("Seleccione el Préstamo", list(dict_pres.keys()))
+        pid = dict_pres[pres_sel]
+        
+        with st.form("form_pago_comunitario"):
+            monto_pag = st.number_input("Monto Pagado (C$)", min_value=1.0, step=10.0)
+            m_cap = st.number_input("Aplicado a Capital (C$)", min_value=0.0, step=10.0)
+            m_int = st.number_input("Aplicado a Interés (C$)", min_value=0.0, step=10.0)
+            f_pag = st.date_input("Fecha de Pago", datetime.now())
+            btn_reg_pago = st.form_submit_button("Registrar Pago y Emitir Recibo")
+            
+            if btn_reg_pago:
+                with motor.begin() as conn:
+                    conn.execute(text("""
+                        INSERT INTO pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
+                        VALUES (:pid, :mp, :mc, :mi, :f, 'Abono')
+                    """), {"pid": pid, "mp": monto_pag, "mc": m_cap, "mi": m_int, "f": str(f_pag)})
+                registrar_bitacora(f"Pago de C$ {monto_pag:,.2f} registrado para Préstamo #{pid}")
+                st.success("¡Pago registrado con éxito!")
+                
+                pdf_bytes = generar_recibo_pdf(
+                    comprobante_id=f"RECIBO-COM-{pid}",
+                    fecha=str(f_pag),
+                    socio=pres_sel.split("-")[1].split("(")[0].strip(),
+                    prestamo_ref=f"Préstamo Comunitario #{pid}",
+                    monto_total=monto_pag,
+                    monto_capital=m_cap,
+                    monto_interes=m_int,
+                    capital_pendiente=0.0
+                )
+                st.download_button(
+                    label="📄 Descargar Recibo Oficial en PDF",
+                    data=pdf_bytes,
+                    file_name=f"recibo_pago_{pid}.pdf",
+                    mime="application/pdf"
+                )
+
+# ==========================================
+# SECCIÓN 7: EGRESOS Y GASTOS
+# ==========================================
+elif opcion == "💸 Egresos y Gastos":
+    st.title("💸 Control de Egresos y Gastos Operativos")
+    with st.form("form_egreso", clear_on_submit=True):
+        concepto = st.text_input("Concepto del Gasto *")
+        monto = st.number_input("Monto (C$)", min_value=1.0, step=10.0)
+        fecha = st.date_input("Fecha", datetime.now())
+        responsable = st.text_input("Responsable", value="Administrador")
+        btn_e = st.form_submit_button("Registrar Egreso")
+        
+        if btn_e:
+            if concepto.strip():
+                with motor.begin() as conn:
+                    conn.execute(text("INSERT INTO egresos (concepto, monto, fecha, responsable) VALUES (:c, :m, :f, :r)"), {"c": concepto, "m": monto, "f": str(fecha), "r": responsable})
+                registrar_bitacora(f"Egreso registrado: {concepto} por C$ {monto:,.2f}")
+                st.success("¡Egreso registrado correctamente!")
+                st.rerun()
+            else:
+                st.error("El concepto es obligatorio.")
+
+    with motor.connect() as conn:
+        df_eg = pd.read_sql(text("SELECT id as \"ID\", concepto as \"Concepto\", monto as \"Monto\", fecha as \"Fecha\", responsable as \"Responsable\" FROM egresos ORDER BY fecha DESC"), conn)
+    if not df_eg.empty:
+        st.dataframe(df_eg, use_container_width=True)
+
+# ==========================================
+# SECCIÓN 8: ESTADO DE CUENTA
+# ==========================================
+elif opcion == "📜 Estado de Cuenta":
+    st.title("📜 Estado de Cuenta Consolidado")
+    with motor.connect() as conn:
+        df_socios = pd.read_sql(text("SELECT id, nombre FROM socios WHERE estado = 'Activo'"), conn)
+    
+    if df_socios.empty:
+        st.info("No hay socios registrados.")
+    else:
+        dict_s = dict(zip(df_socios["nombre"], df_socios["id"]))
+        soc_sel = st.selectbox("Seleccionar Socio para ver Estado de Cuenta", list(dict_s.keys()))
+        sid = dict_s[soc_sel]
+        
+        with motor.connect() as conn:
+            ahorros_soc = pd.read_sql(text("SELECT monto, fecha, nota FROM ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})
+            prest_soc = pd.read_sql(text("SELECT id, monto_prestado, tasa_interes, monto_total, fecha_inicio, estado FROM prestamos WHERE socio_id = :sid"), conn, params={"sid": sid})
+        
+        st.subheader(f"Estado de Cuenta de: {soc_sel}")
+        st.markdown("### Ahorros Registrados")
+        st.dataframe(ahorros_soc, use_container_width=True)
+        st.markdown("### Préstamos Registrados")
+        st.dataframe(prest_soc, use_container_width=True)
+
+# ==========================================
+# SECCIÓN 9: LIQUIDACIÓN ANUAL
+# ==========================================
+elif opcion == "🎉 Liquidación Anual":
+    st.title("🎉 Liquidación Anual de Intereses y Ahorros")
+    anio_liq = st.selectbox("Seleccionar Año a Liquidar", [2024, 2025, 2026, 2027], index=2)
+    
+    with motor.connect() as conn:
+        tot_ah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM ahorros WHERE anio = :a"), conn, params={"a": anio_liq})["t"].iloc[0]
+        tot_int = pd.read_sql(text("SELECT COALESCE(SUM(interes_total), 0) as t FROM prestamos WHERE anio = :a"), conn, params={"a": anio_liq})["t"].iloc[0]
+    
+    col1, col2 = st.columns(2)
+    col1.metric(f"Total Ahorros ({anio_liq})", f"C$ {float(tot_ah):,.2f}")
+    col2.metric(f"Total Intereses Generados ({anio_liq})", f"C$ {float(tot_int):,.2f}")
+
+# ==========================================
+# SECCIÓN 10: CIERRE MENSUAL Y ANUAL
+# ==========================================
+elif opc_cierre := opcion == "📅 Cierre Mensual y Anual":
+    st.title("📅 Cierres Contables")
+    st.info("Módulo de auditoría y cierre contable habilitado para la administración general.")
+
+# ==========================================
+# SECCIÓN 11: BITÁCORA DE AUDITORÍA
+# ==========================================
+elif opcion == "🛡️ Bitácora de Auditoría":
+    st.title("🛡️ Bitácora de Auditoría del Sistema")
+    with motor.connect() as conn:
+        df_bit = pd.read_sql(text("SELECT id as \"ID\", fecha as \"Fecha y Hora\", usuario as \"Usuario\", accion as \"Acción Realizada\" FROM bitacora ORDER BY fecha DESC LIMIT 100"), conn)
+    if not df_bit.empty:
+        st.dataframe(df_bit, use_container_width=True)
+    else:
+        st.info("La bitácora está vacía.")
+
+# ==========================================
+# SECCIÓN 12: MIS PROYECTOS PERSONALES (CON PANEL GENERAL)
 # ==========================================
 elif opcion == "📂 Mis Proyectos Personales":
     st.title("📂 Espacio de Uso Personal y Préstamos Privados")
@@ -1074,6 +1265,7 @@ elif opcion == "📂 Mis Proyectos Personales":
     p_opcion = st.radio(
         "Selecciona una herramienta personal:",
         [
+            "📊 Panel General Personal",
             "👥 Clientes / Socios Personales",
             "💵 Ahorros Personales",
             "🤝 Préstamos Personales",
@@ -1086,8 +1278,26 @@ elif opcion == "📂 Mis Proyectos Personales":
     )
     st.markdown("---")
 
-    # 1. CLIENTES / SOCIOS PERSONALES
-    if p_opcion == "👥 Clientes / Socios Personales":
+    # PANEL GENERAL PERSONAL
+    if p_opcion == "📊 Panel General Personal":
+        st.subheader("📊 Resumen General de Caja (Personal)")
+        with motor.connect() as conn:
+            pah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros"), conn)["t"].iloc[0]
+            ppr = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE estado = 'Activo'"), conn)["t"].iloc[0]
+            ppg = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos"), conn)["t"].iloc[0]
+            peg = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos"), conn)["t"].iloc[0]
+            
+            disp_personal = float(pah) + float(ppg) - float(ppr) - float(peg)
+
+        pc1, pc2, pc3, pc4, pc5 = st.columns(5)
+        pc1.metric("💰 Ahorros Personales", f"C$ {float(pah):,.2f}")
+        pc2.metric("📉 Préstamos Activos", f"C$ {float(ppr):,.2f}")
+        pc3.metric("📥 Cobros Recaudados", f"C$ {float(ppg):,.2f}")
+        pc4.metric("💸 Gastos Personales", f"C$ {float(peg):,.2f}")
+        pc5.metric("🏦 Disponible en Caja", f"C$ {disp_personal:,.2f}")
+
+    # 1. CLIENTES PERSONALES
+    elif p_opcion == "👥 Clientes / Socios Personales":
         st.subheader("Control de Clientes / Socios (Personal)")
         ptab1, ptab2 = st.tabs(["📋 Listado", "➕ Registrar Cliente"])
         
@@ -1226,7 +1436,6 @@ elif opcion == "📂 Mis Proyectos Personales":
                         """), {"pid": pid_sel, "mp": m_pagado, "mc": m_cap, "mi": m_int, "f": str(f_pago)})
                     st.success("¡Pago registrado con éxito!")
                     
-                    # Generar Recibo PDF
                     pdf_bytes = generar_recibo_pdf(
                         comprobante_id=f"RECIBO-PER-{pid_sel}",
                         fecha=str(f_pago),
@@ -1270,15 +1479,22 @@ elif opcion == "📂 Mis Proyectos Personales":
 
     # 7. ESTADO DE CUENTA PERSONAL
     elif p_opcion == "📜 Estado de Cuenta Personal":
-        st.subheader("Estado de Cuenta Consolidado")
+        st.subheader("Estado de Cuenta Consolidado (Personal)")
         with motor.connect() as conn:
-            tot_ah_p = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros"), conn)["t"].iloc[0]
-            tot_pr_p = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE estado='Activo'"), conn)["t"].iloc[0]
-            tot_pg_p = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos"), conn)["t"].iloc[0]
-            tot_eg_p = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos"), conn)["t"].iloc[0]
+            df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
         
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Ahorros Personales", f"C$ {float(tot_ah_p):,.2f}")
-        c2.metric("Préstamos Activos", f"C$ {float(tot_pr_p):,.2f}")
-        c3.metric("Cobros Recaudados", f"C$ {float(tot_pg_p):,.2f}")
-        c4.metric("Gastos Personales", f"C$ {float(tot_eg_p):,.2f}")
+        if df_psoc.empty:
+            st.info("No hay clientes personales registrados.")
+        else:
+            dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
+            psel = st.selectbox("Seleccionar Cliente", list(dict_ps.keys()))
+            sid = dict_ps[psel]
+            
+            with motor.connect() as conn:
+                ah_p = pd.read_sql(text("SELECT monto, fecha, nota FROM personal_ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})
+                pr_p = pd.read_sql(text("SELECT id, monto_prestado, tasa_interes, monto_total, fecha_inicio, estado FROM personal_prestamos WHERE socio_id = :sid"), conn, params={"sid": sid})
+            
+            st.markdown("### Ahorros del Cliente")
+            st.dataframe(ah_p, use_container_width=True)
+            st.markdown("### Préstamos del Cliente")
+            st.dataframe(pr_p, use_container_width=True)
