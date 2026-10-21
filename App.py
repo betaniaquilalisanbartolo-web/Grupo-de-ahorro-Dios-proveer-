@@ -1554,7 +1554,7 @@ elif opcion == "📂 Mis Proyectos Personales":
                     
                     tot_ahorro_c = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})["t"].iloc[0]
                     tot_prestamo_c = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn, params={"sid": sid})["t"].iloc[0]
-                    cnt_prestamo_c = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn)["c"].iloc[0]
+                    cnt_prestamo_c = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn, params={"sid": sid})["c"].iloc[0]
                     tot_pagos_c = pd.read_sql(text("SELECT COALESCE(SUM(p.monto_pagado), 0) as t FROM personal_pagos p JOIN personal_prestamos pr ON p.prestamo_id = pr.id WHERE pr.socio_id = :sid"), conn, params={"sid": sid})["t"].iloc[0]
 
                 st.markdown(f"### 👤 Estado de Cuenta Individual: {psel}")
@@ -1577,4 +1577,4 @@ elif opcion == "📂 Mis Proyectos Personales":
                     st.info("Este socio no tiene préstamos activos.")
 
                 pdf_ec = generar_estado_cuenta_pdf(cliente=psel, df_ahorros=ah_p, df_prestamos=pr_p)
-                st.download_button("📄 Descargar Estado de Cuenta del Cliente (PDF)", pdf_ec, f"estado_cuenta_{sid}.pdf", "application/pdf")8
+                st.download_button("📄 Descargar Estado de Cuenta del Cliente (PDF)", pdf_ec, f"estado_cuenta_{sid}.pdf", "application/pdf")
