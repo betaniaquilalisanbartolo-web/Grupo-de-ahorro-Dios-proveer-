@@ -27,7 +27,12 @@ st.set_page_config(
 @st.cache_resource
 def obtener_motor():
     db_url = st.secrets["postgres"]["url"]
-    return create_engine(db_url, pool_pre_ping=True, pool_recycle=300)
+    return create_engine(
+        db_url,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={"connect_timeout": 10}
+    )
 
 
 motor = obtener_motor()
