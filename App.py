@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import time
 from datetime import datetime
 
 import pandas as pd
@@ -60,187 +61,199 @@ def verificar_contrasena(contrasena_ingresada: str, hash_almacenado: str) -> boo
 
 
 def init_db():
-    with motor.begin() as conn:
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS configuracion (
-                clave VARCHAR(50) PRIMARY KEY,
-                valor VARCHAR(550) NOT NULL
-            );
-        """)
-        )
+    max_intentos = 3
+    intentos = 0
+    while intentos < max_intentos:
+        try:
+            with motor.begin() as conn:
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS configuracion (
+                        clave VARCHAR(50) PRIMARY KEY,
+                        valor VARCHAR(550) NOT NULL
+                    );
+                """)
+                )
 
-        res = conn.execute(
-            text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
-        ).fetchone()
-        if not res:
-            pass_default_hash = hash_password("admin123")
-            conn.execute(
-                text(
-                    "INSERT INTO configuracion (clave, valor) VALUES"
-                    " ('admin_password', :val)"
-                ),
-                {"val": pass_default_hash},
-            )
+                res = conn.execute(
+                    text("SELECT valor FROM configuracion WHERE clave = 'admin_password'")
+                ).fetchone()
+                if not res:
+                    pass_default_hash = hash_password("admin123")
+                    conn.execute(
+                        text(
+                            "INSERT INTO configuracion (clave, valor) VALUES"
+                            " ('admin_password', :val)"
+                        ),
+                        {"val": pass_default_hash},
+                    )
 
-        # TABLAS COMUNITARIAS
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS socios (
-                id SERIAL PRIMARY KEY,
-                nombre VARCHAR(255) NOT NULL,
-                telefono VARCHAR(50),
-                fecha_registro DATE NOT NULL,
-                estado VARCHAR(20) DEFAULT 'Activo'
-            );
-        """)
-        )
+                # TABLAS COMUNITARIAS
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS socios (
+                        id SERIAL PRIMARY KEY,
+                        nombre VARCHAR(255) NOT NULL,
+                        telefono VARCHAR(50),
+                        fecha_registro DATE NOT NULL,
+                        estado VARCHAR(20) DEFAULT 'Activo'
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS ahorros (
-                id SERIAL PRIMARY KEY,
-                socio_id INTEGER NOT NULL REFERENCES socios(id),
-                monto NUMERIC(12, 2) NOT NULL,
-                fecha DATE NOT NULL,
-                nota TEXT,
-                anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS ahorros (
+                        id SERIAL PRIMARY KEY,
+                        socio_id INTEGER NOT NULL REFERENCES socios(id),
+                        monto NUMERIC(12, 2) NOT NULL,
+                        fecha DATE NOT NULL,
+                        nota TEXT,
+                        anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS prestamos (
-                id SERIAL PRIMARY KEY,
-                socio_id INTEGER NOT NULL REFERENCES socios(id),
-                monto_prestado NUMERIC(12, 2) NOT NULL,
-                tasa_interes NUMERIC(5, 2) NOT NULL,
-                plazo_meses INTEGER NOT NULL,
-                interes_total NUMERIC(12, 2) NOT NULL,
-                monto_total NUMERIC(12, 2) NOT NULL,
-                fecha_inicio DATE NOT NULL,
-                estado VARCHAR(20) DEFAULT 'Activo',
-                anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS prestamos (
+                        id SERIAL PRIMARY KEY,
+                        socio_id INTEGER NOT NULL REFERENCES socios(id),
+                        monto_prestado NUMERIC(12, 2) NOT NULL,
+                        tasa_interes NUMERIC(5, 2) NOT NULL,
+                        plazo_meses INTEGER NOT NULL,
+                        interes_total NUMERIC(12, 2) NOT NULL,
+                        monto_total NUMERIC(12, 2) NOT NULL,
+                        fecha_inicio DATE NOT NULL,
+                        estado VARCHAR(20) DEFAULT 'Activo',
+                        anio INTEGER DEFAULT EXTRACT(YEAR FROM CURRENT_DATE)
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS pagos (
-                id SERIAL PRIMARY KEY,
-                prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
-                monto_pagado NUMERIC(12, 2) NOT NULL,
-                monto_capital NUMERIC(12, 2) DEFAULT 0.00,
-                monto_interes NUMERIC(12, 2) DEFAULT 0.00,
-                fecha DATE NOT NULL,
-                tipo VARCHAR(20)
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS pagos (
+                        id SERIAL PRIMARY KEY,
+                        prestamo_id INTEGER NOT NULL REFERENCES prestamos(id),
+                        monto_pagado NUMERIC(12, 2) NOT NULL,
+                        monto_capital NUMERIC(12, 2) DEFAULT 0.00,
+                        monto_interes NUMERIC(12, 2) DEFAULT 0.00,
+                        fecha DATE NOT NULL,
+                        tipo VARCHAR(20)
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS egresos (
-                id SERIAL PRIMARY KEY,
-                concepto VARCHAR(255) NOT NULL,
-                monto NUMERIC(12, 2) NOT NULL,
-                fecha DATE NOT NULL,
-                responsable VARCHAR(100)
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS egresos (
+                        id SERIAL PRIMARY KEY,
+                        concepto VARCHAR(255) NOT NULL,
+                        monto NUMERIC(12, 2) NOT NULL,
+                        fecha DATE NOT NULL,
+                        responsable VARCHAR(100)
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS cierres_anuales (
-                id SERIAL PRIMARY KEY,
-                anio INTEGER NOT NULL,
-                total_ahorrado NUMERIC(12, 2) NOT NULL,
-                total_intereses NUMERIC(12, 2) NOT NULL,
-                fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS cierres_anuales (
+                        id SERIAL PRIMARY KEY,
+                        anio INTEGER NOT NULL,
+                        total_ahorrado NUMERIC(12, 2) NOT NULL,
+                        total_intereses NUMERIC(12, 2) NOT NULL,
+                        fecha_cierre TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS bitacora (
-                id SERIAL PRIMARY KEY,
-                fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                usuario VARCHAR(100) DEFAULT 'Administrador',
-                accion TEXT NOT NULL
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS bitacora (
+                        id SERIAL PRIMARY KEY,
+                        fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        usuario VARCHAR(100) DEFAULT 'Administrador',
+                        accion TEXT NOT NULL
+                    );
+                """)
+                )
 
-        # TABLAS PERSONALES INDEPENDIENTES
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS personal_socios (
-                id SERIAL PRIMARY KEY,
-                nombre VARCHAR(255) NOT NULL,
-                telefono VARCHAR(50),
-                fecha_registro DATE NOT NULL,
-                estado VARCHAR(20) DEFAULT 'Activo'
-            );
-        """)
-        )
+                # TABLAS PERSONALES INDEPENDIENTES
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS personal_socios (
+                        id SERIAL PRIMARY KEY,
+                        nombre VARCHAR(255) NOT NULL,
+                        telefono VARCHAR(50),
+                        fecha_registro DATE NOT NULL,
+                        estado VARCHAR(20) DEFAULT 'Activo'
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS personal_ahorros (
-                id SERIAL PRIMARY KEY,
-                socio_id INTEGER NOT NULL REFERENCES personal_socios(id),
-                monto NUMERIC(12, 2) NOT NULL,
-                fecha DATE NOT NULL,
-                nota TEXT
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS personal_ahorros (
+                        id SERIAL PRIMARY KEY,
+                        socio_id INTEGER NOT NULL REFERENCES personal_socios(id),
+                        monto NUMERIC(12, 2) NOT NULL,
+                        fecha DATE NOT NULL,
+                        nota TEXT
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS personal_prestamos (
-                id SERIAL PRIMARY KEY,
-                socio_id INTEGER NOT NULL REFERENCES personal_socios(id),
-                monto_prestado NUMERIC(12, 2) NOT NULL,
-                tasa_interes NUMERIC(5, 2) NOT NULL,
-                plazo_meses INTEGER NOT NULL,
-                interes_total NUMERIC(12, 2) NOT NULL,
-                monto_total NUMERIC(12, 2) NOT NULL,
-                fecha_inicio DATE NOT NULL,
-                estado VARCHAR(20) DEFAULT 'Activo'
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS personal_prestamos (
+                        id SERIAL PRIMARY KEY,
+                        socio_id INTEGER NOT NULL REFERENCES personal_socios(id),
+                        monto_prestado NUMERIC(12, 2) NOT NULL,
+                        tasa_interes NUMERIC(5, 2) NOT NULL,
+                        plazo_meses INTEGER NOT NULL,
+                        interes_total NUMERIC(12, 2) NOT NULL,
+                        monto_total NUMERIC(12, 2) NOT NULL,
+                        fecha_inicio DATE NOT NULL,
+                        estado VARCHAR(20) DEFAULT 'Activo'
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS personal_pagos (
-                id SERIAL PRIMARY KEY,
-                prestamo_id INTEGER NOT NULL REFERENCES personal_prestamos(id),
-                monto_pagado NUMERIC(12, 2) NOT NULL,
-                monto_capital NUMERIC(12, 2) DEFAULT 0.00,
-                monto_interes NUMERIC(12, 2) DEFAULT 0.00,
-                fecha DATE NOT NULL,
-                tipo VARCHAR(20)
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS personal_pagos (
+                        id SERIAL PRIMARY KEY,
+                        prestamo_id INTEGER NOT NULL REFERENCES personal_prestamos(id),
+                        monto_pagado NUMERIC(12, 2) NOT NULL,
+                        monto_capital NUMERIC(12, 2) DEFAULT 0.00,
+                        monto_interes NUMERIC(12, 2) DEFAULT 0.00,
+                        fecha DATE NOT NULL,
+                        tipo VARCHAR(20)
+                    );
+                """)
+                )
 
-        conn.execute(
-            text("""
-            CREATE TABLE IF NOT EXISTS personal_egresos (
-                id SERIAL PRIMARY KEY,
-                concepto VARCHAR(255) NOT NULL,
-                monto NUMERIC(12, 2) NOT NULL,
-                fecha DATE NOT NULL,
-                responsable VARCHAR(100)
-            );
-        """)
-        )
+                conn.execute(
+                    text("""
+                    CREATE TABLE IF NOT EXISTS personal_egresos (
+                        id SERIAL PRIMARY KEY,
+                        concepto VARCHAR(255) NOT NULL,
+                        monto NUMERIC(12, 2) NOT NULL,
+                        fecha DATE NOT NULL,
+                        responsable VARCHAR(100)
+                    );
+                """)
+                )
+            break
+        except Exception as e:
+            intentos += 1
+            if intentos >= max_intentos:
+                st.error(f"❌ Error crítico de conexión a la base de datos tras {max_intentos} intentos: {e}")
+                st.stop()
+            else:
+                time.sleep(2)
 
 
 if "db_inicializada" not in st.session_state:
@@ -282,7 +295,6 @@ def to_excel(df: pd.DataFrame) -> bytes:
     return salida.getvalue()
 
 
-# GENERADORES PDF REPORTLAB
 def generar_comprobante_generico_pdf(
     titulo_doc: str,
     subtitulo: str,
@@ -1047,7 +1059,7 @@ elif opcion == "🛡️ Bitácora de Auditoría":
         st.info("La bitácora está vacía.")
 
 # ==========================================
-# SECCIÓN 12: MIS PROYECTOS PERSONALES (COMPLETO CON EDICIÓN Y VISTA ACREEDOR)
+# SECCIÓN 12: MIS PROYECTOS PERSONALES
 # ==========================================
 elif opcion == "📂 Mis Proyectos Personales":
     st.title("📂 Espacio de Uso Personal y Préstamos Privados")
@@ -1071,7 +1083,6 @@ elif opcion == "📂 Mis Proyectos Personales":
 
     meses_dict = {1: "Enero", 2: "Febrero", 3: "Marzo", 4: "Abril", 5: "Mayo", 6: "Junio", 7: "Julio", 8: "Agosto", 9: "Septiembre", 10: "Octubre", 11: "Noviembre", 12: "Diciembre"}
 
-    # PANEL GENERAL PERSONAL
     if p_opcion == "📊 Panel General Personal":
         st.subheader("📊 Resumen General de Caja y Cartera (Personal)")
         with motor.connect() as conn:
@@ -1090,7 +1101,6 @@ elif opcion == "📂 Mis Proyectos Personales":
         pc4.metric("💸 Gastos Personales (-)", f"C$ {float(peg):,.2f}")
         pc5.metric("🏦 Disponible en Caja", f"C$ {disp_personal:,.2f}")
 
-    # 1. CLIENTES PERSONALES
     elif p_opcion == "👥 Clientes / Socios Personales":
         st.subheader("Control de Clientes / Socios (Personal)")
         ptab1, ptab2, ptab3 = st.tabs(["📋 Listado", "➕ Registrar Cliente", "✏️ Editar / Eliminar Cliente"])
@@ -1154,7 +1164,6 @@ elif opcion == "📂 Mis Proyectos Personales":
                         st.warning(f"Cliente ID #{psid_e} y sus registros vinculados han sido eliminados.")
                         st.rerun()
 
-    # 2. AHORROS PERSONALES
     elif p_opcion == "💵 Ahorros Personales":
         st.subheader("Depósitos y Ahorro Personal")
         ptab_a1, ptab_a2 = st.tabs(["➕ Registrar Ahorro", "✏️ Editar / Eliminar Ahorro"])
@@ -1231,7 +1240,6 @@ elif opcion == "📂 Mis Proyectos Personales":
                         st.warning("Registro de ahorro eliminado.")
                         st.rerun()
 
-    # 3. PRÉSTAMOS PERSONALES
     elif p_opcion == "🤝 Préstamos Personales":
         st.subheader("Otorgar y Gestionar Préstamos Personales")
         ptab_p1, ptab_p2 = st.tabs(["➕ Otorgar Préstamo", "✏️ Editar / Cancelar / Eliminar Préstamo"])
@@ -1324,7 +1332,6 @@ elif opcion == "📂 Mis Proyectos Personales":
                         st.warning(f"Préstamo #{ppid_e} y sus abonos vinculados han sido eliminados.")
                         st.rerun()
 
-    # 4. SIMULADOR PERSONAL
     elif p_opcion == "🧮 Simulador Personal":
         st.subheader("Simulador de Préstamos Personales")
         s_monto = st.number_input("Monto a simular (C$)", min_value=100.0, value=5000.0, step=500.0)
@@ -1342,7 +1349,6 @@ elif opcion == "📂 Mis Proyectos Personales":
             c2.metric("Interés Total", f"C$ {interes_mes * s_plazo:,.2f}")
             c3.metric("Monto Total a Pagar", f"C$ {total_pagar:,.2f}")
 
-    # 5. PAGOS Y RECIBOS PERSONALES
     elif p_opcion == "📖 Pagos y Recibos Personales":
         st.subheader("Registrar Abono / Pago de Clientes")
         ptab_pg1, ptab_pg2 = st.tabs(["➕ Registrar Abono / Pago", "✏️ Editar / Eliminar Pago"])
@@ -1420,7 +1426,6 @@ elif opcion == "📂 Mis Proyectos Personales":
                         st.warning("Registro de pago eliminado.")
                         st.rerun()
 
-    # 6. EGRESOS Y GASTOS PERSONALES
     elif p_opcion == "💸 Egresos y Gastos Personales":
         st.subheader("Control de Gastos y Egresos Personales")
         ptab_eg1, ptab_eg2 = st.tabs(["➕ Registrar Gasto", "✏️ Editar / Eliminar Gasto"])
@@ -1495,7 +1500,6 @@ elif opcion == "📂 Mis Proyectos Personales":
                         st.warning("Gasto eliminado.")
                         st.rerun()
 
-    # 7. ESTADO DE CUENTA PERSONAL
     elif p_opcion == "📜 Estado de Cuenta Personal":
         st.subheader("📜 Estado de Cuenta Consolidado Personal")
         
