@@ -1042,7 +1042,7 @@ elif opcion == "🛡️ Bitácora de Auditoría":
         st.info("La bitácora está vacía.")
 
 # ==========================================
-# SECCIÓN 12: MIS PROYECTOS PERSONALES (CORREGIDO Y OPTIMIZADO)
+# SECCIÓN 12: MIS PROYECTOS PERSONALES (COMPLETO CON EDICIÓN Y VISTA ACREEDOR)
 # ==========================================
 elif opcion == "📂 Mis Proyectos Personales":
     st.title("📂 Espacio de Uso Personal y Préstamos Privados")
@@ -1088,7 +1088,7 @@ elif opcion == "📂 Mis Proyectos Personales":
     # 1. CLIENTES PERSONALES
     elif p_opcion == "👥 Clientes / Socios Personales":
         st.subheader("Control de Clientes / Socios (Personal)")
-        ptab1, ptab2 = st.tabs(["📋 Listado", "➕ Registrar Cliente"])
+        ptab1, ptab2, ptab3 = st.tabs(["📋 Listado", "➕ Registrar Cliente", "✏️ Editar / Eliminar Cliente"])
         
         with ptab1:
             with motor.connect() as conn:
@@ -1113,121 +1113,211 @@ elif opcion == "📂 Mis Proyectos Personales":
                     else:
                         st.error("El nombre es obligatorio.")
 
+        with ptab3:
+            with motor.connect() as conn:
+                df_ps_edit = pd.read_sql(text("SELECT id, nombre, telefono, fecha_registro, estado FROM personal_socios ORDER BY id DESC"), conn)
+            if df_ps_edit.empty:
+                st.info("No hay clientes registrados para editar o eliminar.")
+            else:
+                dict_ps_e = {f"ID #{row['id']} - {row['nombre']}": row['id'] for _, row in df_ps_edit.iterrows()}
+                psel_e = st.selectbox("Selecciona Cliente a Modificar:", list(dict_ps_e.keys()))
+                psid_e = dict_ps_e[psel_e]
+                d_soc = df_ps_edit[df_ps_edit["id"] == psid_e].iloc[0]
+
+                with st.form("form_edit_psocio"):
+                    e_pnom = st.text_input("Nombre Completo", value=d_soc["nombre"])
+                    e_ptel = st.text_input("Teléfono / WhatsApp", value=d_soc["telefono"] or "")
+                    e_pfech = st.date_input("Fecha de Registro", value=pd.to_datetime(d_soc["fecha_registro"]).date())
+                    e_pest = st.selectbox("Estado", ["Activo", "Inactivo"], index=0 if d_soc["estado"] == "Activo" else 1)
+
+                    cb1, cb2 = st.columns(2)
+                    b_up_ps = cb1.form_submit_button("💾 Guardar Cambios")
+                    b_del_ps = cb2.form_submit_button("🗑️ Eliminar Cliente")
+
+                    if b_up_ps:
+                        with motor.begin() as conn:
+                            conn.execute(text("UPDATE personal_socios SET nombre = :n, telefono = :t, fecha_registro = :f, estado = :e WHERE id = :id"), {"n": e_pnom, "t": e_ptel, "f": str(e_pfech), "e": e_pest, "id": psid_e})
+                        st.success("¡Cliente actualizado correctamente!")
+                        st.rerun()
+
+                    if b_del_ps:
+                        with motor.begin() as conn:
+                            conn.execute(text("DELETE FROM personal_pagos WHERE prestamo_id IN (SELECT id FROM personal_prestamos WHERE socio_id = :id)"), {"id": psid_e})
+                            conn.execute(text("DELETE FROM personal_prestamos WHERE socio_id = :id"), {"id": psid_e})
+                            conn.execute(text("DELETE FROM personal_ahorros WHERE socio_id = :id"), {"id": psid_e})
+                            conn.execute(text("DELETE FROM personal_socios WHERE id = :id"), {"id": psid_e})
+                        st.warning(f"Cliente ID #{psid_e} y sus registros vinculados han sido eliminados.")
+                        st.rerun()
+
     # 2. AHORROS PERSONALES
     elif p_opcion == "💵 Ahorros Personales":
-        st.subheader("Depósitos y Ahorro Personal (Resumen Mensual y Recibos PDF)")
+        st.subheader("Depósitos y Ahorro Personal")
+        ptab_a1, ptab_a2 = st.tabs(["➕ Registrar Ahorro", "✏️ Editar / Eliminar Ahorro"])
         
-        col_m, col_a = st.columns(2)
-        with col_m:
-            m_ah = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_ah")
-        with col_a:
-            a_ah = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_ah")
-
-        with motor.connect() as conn:
-            tot_mes_ah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_ah, "a": a_ah})["t"].iloc[0]
-        
-        st.metric(f"💵 Total Ahorrado en {meses_dict[m_ah]} {a_ah}", f"C$ {float(tot_mes_ah):,.2f}")
-        st.markdown("---")
-
-        with motor.connect() as conn:
-            df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
-        
-        if df_psoc.empty:
-            st.warning("No hay socios/clientes activos registrados para depositar ahorros.")
-        else:
-            dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
-            with st.form("form_pahorro", clear_on_submit=True):
-                psel = st.selectbox("Seleccionar Socio/Cliente", list(dict_ps.keys()))
-                pmonto = st.number_input("Monto del Ahorro (C$)", min_value=1.0, step=10.0)
-                pfech = st.date_input("Fecha", datetime.now())
-                pnote = st.text_input("Nota u Observación")
-                pbtn_ah = st.form_submit_button("Registrar Ahorro y Generar Recibo PDF")
-                
-                if pbtn_ah:
-                    sid = dict_ps[psel]
-                    with motor.begin() as conn:
-                        res = conn.execute(text("INSERT INTO personal_ahorros (socio_id, monto, fecha, nota) VALUES (:s, :m, :f, :n) RETURNING id"), {"s": sid, "m": pmonto, "f": str(pfech), "n": pnote})
-                        new_id = res.fetchone()[0]
-                    st.success("¡Ahorro personal registrado correctamente!")
-                    
-                    pdf_ahorro = generar_comprobante_generico_pdf(
-                        titulo_doc="PROYECTOS PERSONALES",
-                        subtitulo="Comprobante de Depósito de Ahorro",
-                        comprobante_id=f"RECIBO-AHORRO-PER-{new_id}",
-                        fecha=str(pfech),
-                        persona=psel,
-                        detalles_dict={"Monto Depósito": f"C$ {pmonto:,.2f}", "Observación": pnote or "Sin notas"}
-                    )
-                    st.download_button("📄 Descargar Recibo de Ahorro PDF", pdf_ahorro, f"recibo_ahorro_{new_id}.pdf", "application/pdf")
+        with ptab_a1:
+            col_m, col_a = st.columns(2)
+            with col_m:
+                m_ah = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_ah")
+            with col_a:
+                a_ah = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_ah")
 
             with motor.connect() as conn:
-                df_pah_hist = pd.read_sql(text("SELECT a.id, s.nombre as cliente, a.monto, a.fecha, a.nota FROM personal_ahorros a JOIN personal_socios s ON a.socio_id = s.id WHERE EXTRACT(MONTH FROM a.fecha) = :m AND EXTRACT(YEAR FROM a.fecha) = :a ORDER BY a.fecha DESC"), conn, params={"m": m_ah, "a": a_ah})
-            if not df_pah_hist.empty:
-                st.dataframe(df_pah_hist, use_container_width=True)
+                tot_mes_ah = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_ah, "a": a_ah})["t"].iloc[0]
+            
+            st.metric(f"💵 Total Ahorrado en {meses_dict[m_ah]} {a_ah}", f"C$ {float(tot_mes_ah):,.2f}")
+            st.markdown("---")
+
+            with motor.connect() as conn:
+                df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
+            
+            if df_psoc.empty:
+                st.warning("No hay socios/clientes activos registrados para depositar ahorros.")
+            else:
+                dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
+                with st.form("form_pahorro", clear_on_submit=True):
+                    psel = st.selectbox("Seleccionar Socio/Cliente", list(dict_ps.keys()))
+                    pmonto = st.number_input("Monto del Ahorro (C$)", min_value=1.0, step=10.0)
+                    pfech = st.date_input("Fecha", datetime.now())
+                    pnote = st.text_input("Nota u Observación")
+                    pbtn_ah = st.form_submit_button("Registrar Ahorro")
+                    
+                    if pbtn_ah:
+                        sid = dict_ps[psel]
+                        with motor.begin() as conn:
+                            res = conn.execute(text("INSERT INTO personal_ahorros (socio_id, monto, fecha, nota) VALUES (:s, :m, :f, :n) RETURNING id"), {"s": sid, "m": pmonto, "f": str(pfech), "n": pnote})
+                            new_id = res.fetchone()[0]
+                        st.success("¡Ahorro personal registrado correctamente!")
+                        st.rerun()
+
+                with motor.connect() as conn:
+                    df_pah_hist = pd.read_sql(text("SELECT a.id, s.nombre as cliente, a.monto, a.fecha, a.nota FROM personal_ahorros a JOIN personal_socios s ON a.socio_id = s.id WHERE EXTRACT(MONTH FROM a.fecha) = :m AND EXTRACT(YEAR FROM a.fecha) = :a ORDER BY a.fecha DESC"), conn, params={"m": m_ah, "a": a_ah})
+                if not df_pah_hist.empty:
+                    st.dataframe(df_pah_hist, use_container_width=True)
+
+        with ptab_a2:
+            with motor.connect() as conn:
+                df_pa_edit = pd.read_sql(text("SELECT a.id, s.nombre as cliente, a.monto, a.fecha, a.nota FROM personal_ahorros a JOIN personal_socios s ON a.socio_id = s.id ORDER BY a.id DESC"), conn)
+            if df_pa_edit.empty:
+                st.info("No hay depósitos de ahorro registrados para modificar.")
+            else:
+                dict_pa_e = {f"ID #{row['id']} - {row['cliente']} (C$ {row['monto']:,.2f} - {row['fecha']})": row['id'] for _, row in df_pa_edit.iterrows()}
+                pa_sel_e = st.selectbox("Selecciona Ahorro a Modificar:", list(dict_pa_e.keys()))
+                paid_e = dict_pa_e[pa_sel_e]
+                d_pah = df_pa_edit[df_pa_edit["id"] == paid_e].iloc[0]
+
+                with st.form("form_edit_pahorro"):
+                    m_pam = st.number_input("Monto (C$)", value=float(d_pah["monto"]), min_value=1.0)
+                    m_paf = st.date_input("Fecha", value=pd.to_datetime(d_pah["fecha"]).date())
+                    m_pan = st.text_input("Nota", value=d_pah["nota"] or "")
+
+                    ca1, ca2 = st.columns(2)
+                    b_up_pa = ca1.form_submit_button("💾 Guardar Cambios")
+                    b_del_pa = ca2.form_submit_button("🗑️ Eliminar Registro")
+
+                    if b_up_pa:
+                        with motor.begin() as conn:
+                            conn.execute(text("UPDATE personal_ahorros SET monto = :m, fecha = :f, nota = :n WHERE id = :id"), {"m": m_pam, "f": str(m_paf), "n": m_pan, "id": paid_e})
+                        st.success("¡Ahorro actualizado!")
+                        st.rerun()
+
+                    if b_del_pa:
+                        with motor.begin() as conn:
+                            conn.execute(text("DELETE FROM personal_ahorros WHERE id = :id"), {"id": paid_e})
+                        st.warning("Registro de ahorro eliminado.")
+                        st.rerun()
 
     # 3. PRÉSTAMOS PERSONALES
     elif p_opcion == "🤝 Préstamos Personales":
-        st.subheader("Otorgar Préstamo Personal (Cierre Mensual y Comprobante PDF)")
-        
-        col_m, col_a = st.columns(2)
-        with col_m:
-            m_pr = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_pr")
-        with col_a:
-            a_pr = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_pr")
+        st.subheader("Otorgar y Gestionar Préstamos Personales")
+        ptab_p1, ptab_p2 = st.tabs(["➕ Otorgar Préstamo", "✏️ Editar / Cancelar / Eliminar Préstamo"])
 
-        with motor.connect() as conn:
-            tot_mes_pr = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE EXTRACT(MONTH FROM fecha_inicio) = :m AND EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"m": m_pr, "a": a_pr})["t"].iloc[0]
-            cnt_mes_pr = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE EXTRACT(MONTH FROM fecha_inicio) = :m AND EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"m": m_pr, "a": a_pr})["c"].iloc[0]
-        
-        st.metric(f"📉 Total Préstamos Otorgados en {meses_dict[m_pr]} {a_pr}", f"C$ {float(tot_mes_pr):,.2f}", delta=f"{cnt_mes_pr} préstamo(s)")
-        st.markdown("---")
-
-        with motor.connect() as conn:
-            df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
-        
-        if df_psoc.empty:
-            st.warning("Primero debes registrar un cliente en la pestaña '👥 Clientes / Socios Personales'.")
-        else:
-            dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
-            with st.form("form_pprestamo"):
-                psoc = st.selectbox("Cliente / Socio", list(dict_ps.keys()))
-                pmonto_p = st.number_input("Monto Prestado (C$)", min_value=100.0, step=100.0)
-                ptasa = st.number_input("Tasa de Interés Mensual (%)", min_value=0.0, value=5.0)
-                pplazo = st.number_input("Plazo (Meses)", min_value=1, value=12, step=1)
-                pfech_ini = st.date_input("Fecha de Inicio", datetime.now())
-                pbtn_prest = st.form_submit_button("Crear Préstamo y Generar Pagaré PDF")
-                
-                if pbtn_prest:
-                    sid = dict_ps[psoc]
-                    interes_tot = pmonto_p * (ptasa / 100.0) * pplazo
-                    monto_tot = pmonto_p + interes_tot
-                    with motor.begin() as conn:
-                        res = conn.execute(text("""
-                            INSERT INTO personal_prestamos (socio_id, monto_prestado, tasa_interes, plazo_meses, interes_total, monto_total, fecha_inicio)
-                            VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi) RETURNING id
-                        """), {"s": sid, "mp": pmonto_p, "ti": ptasa, "pl": pplazo, "it": interes_tot, "mt": monto_tot, "fi": str(pfech_ini)})
-                        new_pr_id = res.fetchone()[0]
-                    st.success("¡Préstamo personal registrado correctamente!")
-                    
-                    pdf_prestamo = generar_comprobante_generico_pdf(
-                        titulo_doc="PROYECTOS PERSONALES",
-                        subtitulo="Comprobante de Préstamo Otorgado",
-                        comprobante_id=f"PRESTAMO-PER-{new_pr_id}",
-                        fecha=str(pfech_ini),
-                        persona=psoc,
-                        detalles_dict={
-                            "Monto Capital": f"C$ {pmonto_p:,.2f}",
-                            "Tasa Interés": f"{ptasa}% mensual",
-                            "Plazo": f"{pplazo} meses",
-                            "TOTAL A CANCELAR": f"C$ {monto_tot:,.2f}"
-                        }
-                    )
-                    st.download_button("📄 Descargar Comprobante Préstamo PDF", pdf_prestamo, f"prestamo_personal_{new_pr_id}.pdf", "application/pdf")
+        with ptab_p1:
+            col_m, col_a = st.columns(2)
+            with col_m:
+                m_pr = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_pr")
+            with col_a:
+                a_pr = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_pr")
 
             with motor.connect() as conn:
-                df_pp_hist = pd.read_sql(text("SELECT p.id, s.nombre as cliente, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :m AND EXTRACT(YEAR FROM p.fecha_inicio) = :a ORDER BY p.id DESC"), conn, params={"m": m_pr, "a": a_pr})
-            if not df_pp_hist.empty:
-                st.dataframe(df_pp_hist, use_container_width=True)
+                tot_mes_pr = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE EXTRACT(MONTH FROM fecha_inicio) = :m AND EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"m": m_pr, "a": a_pr})["t"].iloc[0]
+                cnt_mes_pr = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE EXTRACT(MONTH FROM fecha_inicio) = :m AND EXTRACT(YEAR FROM fecha_inicio) = :a"), conn, params={"m": m_pr, "a": a_pr})["c"].iloc[0]
+            
+            st.metric(f"📉 Total Préstamos Otorgados en {meses_dict[m_pr]} {a_pr}", f"C$ {float(tot_mes_pr):,.2f}", delta=f"{cnt_mes_pr} préstamo(s)")
+            st.markdown("---")
+
+            with motor.connect() as conn:
+                df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
+            
+            if df_psoc.empty:
+                st.warning("Primero debes registrar un cliente en la pestaña '👥 Clientes / Socios Personales'.")
+            else:
+                dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
+                with st.form("form_pprestamo"):
+                    psoc = st.selectbox("Cliente / Socio", list(dict_ps.keys()))
+                    pmonto_p = st.number_input("Monto Prestado (C$)", min_value=100.0, step=100.0)
+                    ptasa = st.number_input("Tasa de Interés Mensual (%)", min_value=0.0, value=5.0)
+                    pplazo = st.number_input("Plazo (Meses)", min_value=1, value=12, step=1)
+                    pfech_ini = st.date_input("Fecha de Inicio", datetime.now())
+                    pbtn_prest = st.form_submit_button("Crear Préstamo")
+                    
+                    if pbtn_prest:
+                        sid = dict_ps[psoc]
+                        interes_tot = pmonto_p * (ptasa / 100.0) * pplazo
+                        monto_tot = pmonto_p + interes_tot
+                        with motor.begin() as conn:
+                            res = conn.execute(text("""
+                                INSERT INTO personal_prestamos (socio_id, monto_prestado, tasa_interes, plazo_meses, interes_total, monto_total, fecha_inicio)
+                                VALUES (:s, :mp, :ti, :pl, :it, :mt, :fi) RETURNING id
+                            """), {"s": sid, "mp": pmonto_p, "ti": ptasa, "pl": pplazo, "it": interes_tot, "mt": monto_tot, "fi": str(pfech_ini)})
+                            new_pr_id = res.fetchone()[0]
+                        st.success(f"¡Préstamo #{new_pr_id} registrado correctamente!")
+                        st.rerun()
+
+                with motor.connect() as conn:
+                    df_pp_hist = pd.read_sql(text("SELECT p.id, s.nombre as cliente, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE EXTRACT(MONTH FROM p.fecha_inicio) = :m AND EXTRACT(YEAR FROM p.fecha_inicio) = :a ORDER BY p.id DESC"), conn, params={"m": m_pr, "a": a_pr})
+                if not df_pp_hist.empty:
+                    st.dataframe(df_pp_hist, use_container_width=True)
+
+        with ptab_p2:
+            with motor.connect() as conn:
+                df_pp_edit = pd.read_sql(text("SELECT p.id, s.nombre as cliente, p.monto_prestado, p.tasa_interes, p.plazo_meses, p.monto_total, p.fecha_inicio, p.estado FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id ORDER BY p.id DESC"), conn)
+            if df_pp_edit.empty:
+                st.info("No hay préstamos registrados para editar o eliminar.")
+            else:
+                dict_pp_e = {f"Préstamo #{row['id']} - {row['cliente']} (C$ {row['monto_prestado']:,.2f} - {row['estado']})": row['id'] for _, row in df_pp_edit.iterrows()}
+                pp_sel_e = st.selectbox("Selecciona Préstamo a Modificar:", list(dict_pp_e.keys()))
+                ppid_e = dict_pp_e[pp_sel_e]
+                d_ppr = df_pp_edit[df_pp_edit["id"] == ppid_e].iloc[0]
+
+                with st.form("form_edit_pprestamo"):
+                    e_monto_p = st.number_input("Monto Prestado (C$)", value=float(d_ppr["monto_prestado"]), min_value=100.0)
+                    e_tasa_p = st.number_input("Tasa Interés (%)", value=float(d_ppr["tasa_interes"]), min_value=0.0)
+                    e_plazo_p = st.number_input("Plazo (Meses)", value=int(d_ppr["plazo_meses"]), min_value=1)
+                    e_fecha_p = st.date_input("Fecha Inicio", value=pd.to_datetime(d_ppr["fecha_inicio"]).date())
+                    e_estado_p = st.selectbox("Estado del Préstamo", ["Activo", "Cancelado", "Inactivo"], index=0 if d_ppr["estado"] == "Activo" else 1)
+
+                    cp1, cp2 = st.columns(2)
+                    b_up_pp = cp1.form_submit_button("💾 Guardar Cambios")
+                    b_del_pp = cp2.form_submit_button("🗑️ Eliminar Préstamo")
+
+                    if b_up_pp:
+                        it_n = e_monto_p * (e_tasa_p / 100.0) * e_plazo_p
+                        mt_n = e_monto_p + it_n
+                        with motor.begin() as conn:
+                            conn.execute(text("""
+                                UPDATE personal_prestamos 
+                                SET monto_prestado = :mp, tasa_interes = :ti, plazo_meses = :pl, interes_total = :it, monto_total = :mt, fecha_inicio = :fi, estado = :e 
+                                WHERE id = :id
+                            """), {"mp": e_monto_p, "ti": e_tasa_p, "pl": e_plazo_p, "it": it_n, "mt": mt_n, "fi": str(e_fecha_p), "e": e_estado_p, "id": ppid_e})
+                        st.success("¡Préstamo actualizado correctamente!")
+                        st.rerun()
+
+                    if b_del_pp:
+                        with motor.begin() as conn:
+                            conn.execute(text("DELETE FROM personal_pagos WHERE prestamo_id = :id"), {"id": ppid_e})
+                            conn.execute(text("DELETE FROM personal_prestamos WHERE id = :id"), {"id": ppid_e})
+                        st.warning(f"Préstamo #{ppid_e} y sus abonos vinculados han sido eliminados.")
+                        st.rerun()
 
     # 4. SIMULADOR PERSONAL
     elif p_opcion == "🧮 Simulador Personal":
@@ -1247,152 +1337,244 @@ elif opcion == "📂 Mis Proyectos Personales":
             c2.metric("Interés Total", f"C$ {interes_mes * s_plazo:,.2f}")
             c3.metric("Monto Total a Pagar", f"C$ {total_pagar:,.2f}")
 
-    # 5. PAGOS Y RECIBOS PERSONALES (HABILITADO COMPLETO)
+    # 5. PAGOS Y RECIBOS PERSONALES
     elif p_opcion == "📖 Pagos y Recibos Personales":
-        st.subheader("Registrar Abono / Pago de Clientes y Emitir Recibo PDF")
-        
-        col_m, col_a = st.columns(2)
-        with col_m:
-            m_pg = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_pg")
-        with col_a:
-            a_pg = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_pg")
+        st.subheader("Registrar Abono / Pago de Clientes")
+        ptab_pg1, ptab_pg2 = st.tabs(["➕ Registrar Abono / Pago", "✏️ Editar / Eliminar Pago"])
 
-        with motor.connect() as conn:
-            tot_mes_pg = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_pg, "a": a_pg})["t"].iloc[0]
-        
-        st.metric(f"📥 Total Cobros Recaudados en {meses_dict[m_pg]} {a_pg}", f"C$ {float(tot_mes_pg):,.2f}")
-        st.markdown("---")
+        with ptab_pg1:
+            col_m, col_a = st.columns(2)
+            with col_m:
+                m_pg = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_pg")
+            with col_a:
+                a_pg = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_pg")
 
-        with motor.connect() as conn:
-            df_pactivo = pd.read_sql(text("SELECT p.id, s.nombre, p.monto_total FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE p.estado = 'Activo'"), conn)
-        
-        if df_pactivo.empty:
-            st.info("No hay préstamos personales activos vigentes para registrar cobros.")
-        else:
-            dict_prest = {f"Préstamo #{row['id']} - {row['nombre']} (Total: C$ {row['monto_total']:,.2f})": row['id'] for _, row in df_pactivo.iterrows()}
-            sel_p = st.selectbox("Seleccionar Préstamo del Cliente para Pagar", list(dict_prest.keys()))
-            pid_sel = dict_prest[sel_p]
-            
-            with st.form("form_ppago"):
-                m_pagado = st.number_input("Monto Pagado por el Cliente (C$)", min_value=1.0, step=10.0)
-                m_cap = st.number_input("Abono Aplicado a Capital (C$)", min_value=0.0, step=10.0)
-                m_int = st.number_input("Pago Aplicado a Interés (C$)", min_value=0.0, step=10.0)
-                f_pago = st.date_input("Fecha de Pago", datetime.now())
-                b_pago = st.form_submit_button("Registrar Pago del Cliente y Generar Recibo PDF")
-                
-                if b_pago:
-                    with motor.begin() as conn:
-                        res = conn.execute(text("""
-                            INSERT INTO personal_pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
-                            VALUES (:pid, :mp, :mc, :mi, :f, 'Abono') RETURNING id
-                        """), {"pid": pid_sel, "mp": m_pagado, "mc": m_cap, "mi": m_int, "f": str(f_pago)})
-                        new_pago_id = res.fetchone()[0]
-                    st.success("¡Pago del cliente registrado correctamente!")
-                    
-                    pdf_bytes = generar_comprobante_generico_pdf(
-                        titulo_doc="PROYECTOS PERSONALES",
-                        subtitulo="Comprobante Oficial de Pago de Préstamo",
-                        comprobante_id=f"RECIBO-PAGO-PER-{new_pago_id}",
-                        fecha=str(f_pago),
-                        persona=sel_p.split("-")[1].split("(")[0].strip(),
-                        detalles_dict={"Abono a Capital": f"C$ {m_cap:,.2f}", "Pago de Interés": f"C$ {m_int:,.2f}", "TOTAL RECIBIDO": f"C$ {m_pagado:,.2f}"}
-                    )
-                    st.download_button("📄 Descargar Recibo Oficial en PDF", pdf_bytes, f"recibo_pago_personal_{new_pago_id}.pdf", "application/pdf")
-
-    # 6. EGRESOS Y GASTOS PERSONALES (SOLUCIONADO PANTALLA EN BLANCO)
-    elif p_opcion == "💸 Egresos y Gastos Personales":
-        st.subheader("Control de Gastos y Egresos Personales (Resumen Mensual y Comprobante PDF)")
-        
-        col_m, col_a = st.columns(2)
-        with col_m:
-            m_eg = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_eg")
-        with col_a:
-            a_eg = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_eg")
-
-        with motor.connect() as conn:
-            tot_mes_eg = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_eg, "a": a_eg})["t"].iloc[0]
-        
-        st.metric(f"💸 Total Gastos en {meses_dict[m_eg]} {a_eg}", f"C$ {float(tot_mes_eg):,.2f}")
-        st.markdown("---")
-
-        with st.form("form_pegresos", clear_on_submit=True):
-            concepto = st.text_input("Concepto del Gasto *")
-            monto_eg = st.number_input("Monto (C$)", min_value=1.0, step=10.0)
-            fecha_eg = st.date_input("Fecha", datetime.now())
-            resp = st.text_input("Responsable / Nota", value="Personal")
-            btn_eg = st.form_submit_button("Guardar Gasto y Generar Comprobante PDF")
-            
-            if btn_eg:
-                if concepto.strip():
-                    with motor.begin() as conn:
-                        res = conn.execute(text("INSERT INTO personal_egresos (concepto, monto, fecha, responsable) VALUES (:c, :m, :f, :r) RETURNING id"), {"c": concepto, "m": monto_eg, "f": str(fecha_eg), "r": resp})
-                        new_eg_id = res.fetchone()[0]
-                    st.success("¡Gasto registrado correctamente!")
-                    
-                    pdf_egreso = generar_comprobante_generico_pdf(
-                        titulo_doc="PROYECTOS PERSONALES",
-                        subtitulo="Comprobante de Egreso / Gasto",
-                        comprobante_id=f"EGRESO-PER-{new_eg_id}",
-                        fecha=str(fecha_eg),
-                        persona=resp,
-                        detalles_dict={"Concepto": concepto, "Monto Egreso": f"C$ {monto_eg:,.2f}"}
-                    )
-                    st.download_button("📄 Descargar Comprobante Egreso PDF", pdf_egreso, f"egreso_personal_{new_eg_id}.pdf", "application/pdf")
-                else:
-                    st.error("El concepto es obligatorio.")
-
-        with motor.connect() as conn:
-            df_eg_hist = pd.read_sql(text("SELECT id as \"ID\", concepto as \"Concepto\", monto as \"Monto\", fecha as \"Fecha\", responsable as \"Responsable\" FROM personal_egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a ORDER BY fecha DESC"), conn, params={"m": m_eg, "a": a_eg})
-        if not df_eg_hist.empty:
-            st.dataframe(df_eg_hist, use_container_width=True)
-        else:
-            st.info(f"No hay gastos o egresos registrados en {meses_dict[m_eg]} {a_eg}.")
-
-    # 7. ESTADO DE CUENTA PERSONAL (SOLUCIONADO PANTALLA EN BLANCO)
-    elif p_opcion == "📜 Estado de Cuenta Personal":
-        st.subheader("Estado de Cuenta Consolidado Personal (Resumen de Caja)")
-        with motor.connect() as conn:
-            df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
-        
-        if df_psoc.empty:
-            st.info("No hay clientes personales registrados. Registra un cliente primero para ver su estado de cuenta.")
-        else:
-            dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
-            psel = st.selectbox("Seleccionar Cliente", list(dict_ps.keys()))
-            sid = dict_ps[psel]
-            
             with motor.connect() as conn:
-                ah_p = pd.read_sql(text("SELECT monto, fecha, nota FROM personal_ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})
-                pr_p = pd.read_sql(text("SELECT id, monto_prestado, tasa_interes, monto_total, fecha_inicio, estado FROM personal_prestamos WHERE socio_id = :sid"), conn, params={"sid": sid})
+                tot_mes_pg = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_pg, "a": a_pg})["t"].iloc[0]
+            
+            st.metric(f"📥 Total Cobros Recaudados en {meses_dict[m_pg]} {a_pg}", f"C$ {float(tot_mes_pg):,.2f}")
+            st.markdown("---")
+
+            with motor.connect() as conn:
+                df_pactivo = pd.read_sql(text("SELECT p.id, s.nombre, p.monto_total FROM personal_prestamos p JOIN personal_socios s ON p.socio_id = s.id WHERE p.estado = 'Activo'"), conn)
+            
+            if df_pactivo.empty:
+                st.info("No hay préstamos personales activos vigentes para registrar cobros.")
+            else:
+                dict_prest = {f"Préstamo #{row['id']} - {row['nombre']} (Total: C$ {row['monto_total']:,.2f})": row['id'] for _, row in df_pactivo.iterrows()}
+                sel_p = st.selectbox("Seleccionar Préstamo del Cliente para Pagar", list(dict_prest.keys()))
+                pid_sel = dict_prest[sel_p]
                 
-                tot_ahorro_c = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})["t"].iloc[0]
-                tot_prestamo_c = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn, params={"sid": sid})["t"].iloc[0]
-                cnt_prestamo_c = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn, params={"sid": sid})["c"].iloc[0]
-                tot_pagos_c = pd.read_sql(text("SELECT COALESCE(SUM(p.monto_pagado), 0) as t FROM personal_pagos p JOIN personal_prestamos pr ON p.prestamo_id = pr.id WHERE pr.socio_id = :sid"), conn, params={"sid": sid})["t"].iloc[0]
-                tot_egresos_p = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos"), conn)["t"].iloc[0]
+                with st.form("form_ppago"):
+                    m_pagado = st.number_input("Monto Pagado por el Cliente (C$)", min_value=1.0, step=10.0)
+                    m_cap = st.number_input("Abono Aplicado a Capital (C$)", min_value=0.0, step=10.0)
+                    m_int = st.number_input("Pago Aplicado a Interés (C$)", min_value=0.0, step=10.0)
+                    f_pago = st.date_input("Fecha de Pago", datetime.now())
+                    b_pago = st.form_submit_button("Registrar Pago del Cliente")
+                    
+                    if b_pago:
+                        with motor.begin() as conn:
+                            res = conn.execute(text("""
+                                INSERT INTO personal_pagos (prestamo_id, monto_pagado, monto_capital, monto_interes, fecha, tipo)
+                                VALUES (:pid, :mp, :mc, :mi, :f, 'Abono') RETURNING id
+                            """), {"pid": pid_sel, "mp": m_pagado, "mc": m_cap, "mi": m_int, "f": str(f_pago)})
+                            new_pago_id = res.fetchone()[0]
+                        st.success("¡Pago del cliente registrado correctamente!")
+                        st.rerun()
 
-                efectivo_disponible_caja = float(tot_ahorro_c) + float(tot_pagos_c) - float(tot_prestamo_c) - float(tot_egresos_p)
+        with ptab_pg2:
+            with motor.connect() as conn:
+                df_pg_edit = pd.read_sql(text("SELECT pg.id, s.nombre as cliente, pg.monto_pagado, pg.monto_capital, pg.monto_interes, pg.fecha FROM personal_pagos pg JOIN personal_prestamos pr ON pg.prestamo_id = pr.id JOIN personal_socios s ON pr.socio_id = s.id ORDER BY pg.id DESC"), conn)
+            if df_pg_edit.empty:
+                st.info("No hay pagos registrados para editar o eliminar.")
+            else:
+                dict_pg_e = {f"Pago #{row['id']} - {row['cliente']} (C$ {row['monto_pagado']:,.2f} - {row['fecha']})": row['id'] for _, row in df_pg_edit.iterrows()}
+                pg_sel_e = st.selectbox("Selecciona Pago a Modificar:", list(dict_pg_e.keys()))
+                pgid_e = dict_pg_e[pg_sel_e]
+                d_pgo = df_pg_edit[df_pg_edit["id"] == pgid_e].iloc[0]
 
-            st.markdown("#### 📊 Resumen Financiero y Disponible en Caja")
+                with st.form("form_edit_ppago"):
+                    e_mpag = st.number_input("Monto Total Pagado (C$)", value=float(d_pgo["monto_pagado"]), min_value=1.0)
+                    e_mcap = st.number_input("Monto a Capital (C$)", value=float(d_pgo["monto_capital"]), min_value=0.0)
+                    e_mint = st.number_input("Monto a Interés (C$)", value=float(d_pgo["monto_interes"]), min_value=0.0)
+                    e_fpag = st.date_input("Fecha de Pago", value=pd.to_datetime(d_pgo["fecha"]).date())
+
+                    cpg1, cpg2 = st.columns(2)
+                    b_up_pg = cpg1.form_submit_button("💾 Guardar Cambios")
+                    b_del_pg = cpg2.form_submit_button("🗑️ Eliminar Pago")
+
+                    if b_up_pg:
+                        with motor.begin() as conn:
+                            conn.execute(text("UPDATE personal_pagos SET monto_pagado = :mp, monto_capital = :mc, monto_interes = :mi, fecha = :f WHERE id = :id"), {"mp": e_mpag, "mc": e_mcap, "mi": e_mint, "f": str(e_fpag), "id": pgid_e})
+                        st.success("¡Pago actualizado!")
+                        st.rerun()
+
+                    if b_del_pg:
+                        with motor.begin() as conn:
+                            conn.execute(text("DELETE FROM personal_pagos WHERE id = :id"), {"id": pgid_e})
+                        st.warning("Registro de pago eliminado.")
+                        st.rerun()
+
+    # 6. EGRESOS Y GASTOS PERSONALES
+    elif p_opcion == "💸 Egresos y Gastos Personales":
+        st.subheader("Control de Gastos y Egresos Personales")
+        ptab_eg1, ptab_eg2 = st.tabs(["➕ Registrar Gasto", "✏️ Editar / Eliminar Gasto"])
+
+        with ptab_eg1:
+            col_m, col_a = st.columns(2)
+            with col_m:
+                m_eg = st.selectbox("Filtrar Mes", list(meses_dict.keys()), format_func=lambda x: meses_dict[x], index=datetime.now().month - 1, key="m_eg")
+            with col_a:
+                a_eg = st.selectbox("Filtrar Año", [2024, 2025, 2026, 2027], index=2, key="a_eg")
+
+            with motor.connect() as conn:
+                tot_mes_eg = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a"), conn, params={"m": m_eg, "a": a_eg})["t"].iloc[0]
+            
+            st.metric(f"💸 Total Gastos en {meses_dict[m_eg]} {a_eg}", f"C$ {float(tot_mes_eg):,.2f}")
+            st.markdown("---")
+
+            with st.form("form_pegresos", clear_on_submit=True):
+                concepto = st.text_input("Concepto del Gasto *")
+                monto_eg = st.number_input("Monto (C$)", min_value=1.0, step=10.0)
+                fecha_eg = st.date_input("Fecha", datetime.now())
+                resp = st.text_input("Responsable / Nota", value="Personal")
+                btn_eg = st.form_submit_button("Guardar Gasto")
+                
+                if btn_eg:
+                    if concepto.strip():
+                        with motor.begin() as conn:
+                            res = conn.execute(text("INSERT INTO personal_egresos (concepto, monto, fecha, responsable) VALUES (:c, :m, :f, :r) RETURNING id"), {"c": concepto, "m": monto_eg, "f": str(fecha_eg), "r": resp})
+                            new_eg_id = res.fetchone()[0]
+                        st.success("¡Gasto registrado correctamente!")
+                        st.rerun()
+                    else:
+                        st.error("El concepto es obligatorio.")
+
+            with motor.connect() as conn:
+                df_eg_hist = pd.read_sql(text("SELECT id as \"ID\", concepto as \"Concepto\", monto as \"Monto\", fecha as \"Fecha\", responsable as \"Responsable\" FROM personal_egresos WHERE EXTRACT(MONTH FROM fecha) = :m AND EXTRACT(YEAR FROM fecha) = :a ORDER BY fecha DESC"), conn, params={"m": m_eg, "a": a_eg})
+            if not df_eg_hist.empty:
+                st.dataframe(df_eg_hist, use_container_width=True)
+            else:
+                st.info(f"No hay gastos o egresos registrados en {meses_dict[m_eg]} {a_eg}.")
+
+        with ptab_eg2:
+            with motor.connect() as conn:
+                df_eg_edit = pd.read_sql(text("SELECT id, concepto, monto, fecha, responsable FROM personal_egresos ORDER BY id DESC"), conn)
+            if df_eg_edit.empty:
+                st.info("No hay gastos registrados para editar o eliminar.")
+            else:
+                dict_eg_e = {f"Gasto #{row['id']} - {row['concepto']} (C$ {row['monto']:,.2f} - {row['fecha']})": row['id'] for _, row in df_eg_edit.iterrows()}
+                eg_sel_e = st.selectbox("Selecciona Gasto a Modificar:", list(dict_eg_e.keys()))
+                egid_e = dict_eg_e[eg_sel_e]
+                d_egr = df_eg_edit[df_eg_edit["id"] == egid_e].iloc[0]
+
+                with st.form("form_edit_pegreso"):
+                    e_con = st.text_input("Concepto del Gasto", value=d_egr["concepto"])
+                    e_mon = st.number_input("Monto (C$)", value=float(d_egr["monto"]), min_value=1.0)
+                    e_feg = st.date_input("Fecha", value=pd.to_datetime(d_egr["fecha"]).date())
+                    e_res = st.text_input("Responsable / Nota", value=d_egr["responsable"] or "Personal")
+
+                    ceg1, ceg2 = st.columns(2)
+                    b_up_eg = ceg1.form_submit_button("💾 Guardar Cambios")
+                    b_del_eg = ceg2.form_submit_button("🗑️ Eliminar Gasto")
+
+                    if b_up_eg:
+                        with motor.begin() as conn:
+                            conn.execute(text("UPDATE personal_egresos SET concepto = :c, monto = :m, fecha = :f, responsable = :r WHERE id = :id"), {"c": e_con, "m": e_mon, "f": str(e_feg), "r": e_res, "id": egid_e})
+                        st.success("¡Gasto actualizado!")
+                        st.rerun()
+
+                    if b_del_eg:
+                        with motor.begin() as conn:
+                            conn.execute(text("DELETE FROM personal_egresos WHERE id = :id"), {"id": egid_e})
+                        st.warning("Gasto eliminado.")
+                        st.rerun()
+
+    # 7. ESTADO DE CUENTA PERSONAL
+    elif p_opcion == "📜 Estado de Cuenta Personal":
+        st.subheader("📜 Estado de Cuenta Consolidado Personal")
+        
+        tipo_vista = st.radio(
+            "Selecciona la perspectiva del informe:",
+            ["🏛️ Vista General del Acreedor (Caja Global)", "👤 Vista por Cliente / Socio Individual"],
+            horizontal=True
+        )
+        st.markdown("---")
+
+        with motor.connect() as conn:
+            tot_ahorros_glob = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros"), conn)["t"].iloc[0]
+            tot_prestamos_glob = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE estado = 'Activo'"), conn)["t"].iloc[0]
+            cnt_prestamos_glob = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE estado = 'Activo'"), conn)["c"].iloc[0]
+            tot_pagos_glob = pd.read_sql(text("SELECT COALESCE(SUM(monto_pagado), 0) as t FROM personal_pagos"), conn)["t"].iloc[0]
+            tot_egresos_glob = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_egresos"), conn)["t"].iloc[0]
+
+            caja_efectivo_acreedor = float(tot_ahorros_glob) + float(tot_pagos_glob) - float(tot_prestamos_glob) - float(tot_egresos_glob)
+
+        if tipo_vista == "🏛️ Vista General del Acreedor (Caja Global)":
+            st.markdown("### 🏛️ Balance General del Acreedor (Administrador)")
+            st.caption("Resumen consolidado de todo el capital en circulación, cobros y gastos.")
+
             c1, c2, c3, c4, c5 = st.columns(5)
-            c1.metric("💰 Total Ahorros", f"C$ {float(tot_ahorro_c):,.2f}")
-            c2.metric("📉 Préstamos Activos", f"C$ {float(tot_prestamo_c):,.2f}", delta=f"{cnt_prestamo_c} préstamo(s)")
-            c3.metric("📥 Cobros Recaudados", f"C$ {float(tot_pagos_c):,.2f}")
-            c4.metric("💸 Gastos/Egresos (-)", f"C$ {float(tot_egresos_p):,.2f}")
-            c5.metric("🏦 Efectivo en Caja", f"C$ {efectivo_disponible_caja:,.2f}")
+            c1.metric("💰 Fondo Ahorros Recibidos", f"C$ {float(tot_ahorros_glob):,.2f}")
+            c2.metric("📉 Capital Prestado Saliente", f"C$ {float(tot_prestamos_glob):,.2f}", delta=f"{cnt_prestamos_glob} préstamo(s) activo(s)")
+            c3.metric("📥 Cobros Recaudados (+)", f"C$ {float(tot_pagos_glob):,.2f}")
+            c4.metric("💸 Gastos / Egresos (-)", f"C$ {float(tot_egresos_glob):,.2f}")
+            c5.metric("🏦 Efectivo Restante en Caja", f"C$ {caja_efectivo_acreedor:,.2f}")
 
             st.markdown("---")
-            st.markdown("### Ahorros del Cliente")
-            if not ah_p.empty:
-                st.dataframe(ah_p, use_container_width=True)
-            else:
-                st.info("Sin registros de ahorros para este cliente.")
+            st.markdown("### 📋 Resumen de Cartera General de Clientes")
+            with motor.connect() as conn:
+                df_cartera = pd.read_sql(text("""
+                    SELECT p.id as "ID Préstamo", s.nombre as "Cliente", p.monto_prestado as "Monto Capital (C$)", 
+                           p.tasa_interes as "Tasa (%)", p.monto_total as "Total a Cobrar (C$)", p.fecha_inicio as "Fecha Inicio", p.estado as "Estado"
+                    FROM personal_prestamos p
+                    JOIN personal_socios s ON p.socio_id = s.id
+                    ORDER BY p.id DESC
+                """), conn)
             
-            st.markdown("### Préstamos del Cliente")
-            if not pr_p.empty:
-                st.dataframe(pr_p, use_container_width=True)
+            if not df_cartera.empty:
+                st.dataframe(df_cartera, use_container_width=True)
             else:
-                st.info("Sin registros de préstamos para este cliente.")
+                st.info("No hay préstamos registrados en la cartera.")
 
-            pdf_ec = generar_estado_cuenta_pdf(cliente=psel, df_ahorros=ah_p, df_prestamos=pr_p)
-            st.download_button("📄 Descargar Estado de Cuenta Completo en PDF", pdf_ec, f"estado_cuenta_{sid}.pdf", "application/pdf")
+        else:
+            with motor.connect() as conn:
+                df_psoc = pd.read_sql(text("SELECT id, nombre FROM personal_socios WHERE estado = 'Activo'"), conn)
+            
+            if df_psoc.empty:
+                st.info("No hay clientes personales registrados.")
+            else:
+                dict_ps = dict(zip(df_psoc["nombre"], df_psoc["id"]))
+                psel = st.selectbox("Seleccionar Cliente / Socio", list(dict_ps.keys()))
+                sid = dict_ps[psel]
+                
+                with motor.connect() as conn:
+                    ah_p = pd.read_sql(text("SELECT monto, fecha, nota FROM personal_ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})
+                    pr_p = pd.read_sql(text("SELECT id, monto_prestado, tasa_interes, monto_total, fecha_inicio, estado FROM personal_prestamos WHERE socio_id = :sid"), conn, params={"sid": sid})
+                    
+                    tot_ahorro_c = pd.read_sql(text("SELECT COALESCE(SUM(monto), 0) as t FROM personal_ahorros WHERE socio_id = :sid"), conn, params={"sid": sid})["t"].iloc[0]
+                    tot_prestamo_c = pd.read_sql(text("SELECT COALESCE(SUM(monto_prestado), 0) as t FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn, params={"sid": sid})["t"].iloc[0]
+                    cnt_prestamo_c = pd.read_sql(text("SELECT COUNT(*) as c FROM personal_prestamos WHERE socio_id = :sid AND estado = 'Activo'"), conn)["c"].iloc[0]
+                    tot_pagos_c = pd.read_sql(text("SELECT COALESCE(SUM(p.monto_pagado), 0) as t FROM personal_pagos p JOIN personal_prestamos pr ON p.prestamo_id = pr.id WHERE pr.socio_id = :sid"), conn, params={"sid": sid})["t"].iloc[0]
+
+                st.markdown(f"### 👤 Estado de Cuenta Individual: {psel}")
+                c1, c2, c3 = st.columns(3)
+                c1.metric("💰 Ahorro Total de este Cliente", f"C$ {float(tot_ahorro_c):,.2f}")
+                c2.metric("📉 Saldo Deudor en Préstamos", f"C$ {float(tot_prestamo_c):,.2f}", delta=f"{cnt_prestamo_c} préstamo(s)")
+                c3.metric("📥 Total Abonado por el Cliente", f"C$ {float(tot_pagos_c):,.2f}")
+
+                st.markdown("---")
+                st.markdown("### Ahorros Registrados")
+                if not ah_p.empty:
+                    st.dataframe(ah_p, use_container_width=True)
+                else:
+                    st.info("Sin registros de ahorros.")
+                
+                st.markdown("### Préstamos Asignados")
+                if not pr_p.empty:
+                    st.dataframe(pr_p, use_container_width=True)
+                else:
+                    st.info("Este socio no tiene préstamos activos.")
+
+                pdf_ec = generar_estado_cuenta_pdf(cliente=psel, df_ahorros=ah_p, df_prestamos=pr_p)
+                st.download_button("📄 Descargar Estado de Cuenta del Cliente (PDF)", pdf_ec, f"estado_cuenta_{sid}.pdf", "application/pdf")8
